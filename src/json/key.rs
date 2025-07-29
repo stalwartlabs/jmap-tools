@@ -4,13 +4,11 @@
  * SPDX-License-Identifier: Apache-2.0 OR MIT
  */
 
-use serde::de::{self, Visitor};
-use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use crate::json::value::Property;
+use serde::de::{self, DeserializeSeed, Visitor};
+use serde::{Serialize, Serializer};
 use std::borrow::Cow;
 use std::fmt;
-use std::ops::Deref;
-
-use crate::json::value::Property;
 
 #[derive(Debug, Clone, PartialOrd, Ord, Hash)]
 pub enum Key<'a, P: Property> {
@@ -19,51 +17,59 @@ pub enum Key<'a, P: Property> {
     Owned(String),
 }
 
-impl<'de: 'a, 'a, P: Property> Deserialize<'de> for Key<'a, P> {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+pub(crate) struct DeserializationContext<'x, P: Property> {
+    pub parent_key: Option<&'x Key<'x, P>>,
+}
+
+impl<'de, 'x, P: Property> DeserializeSeed<'de> for DeserializationContext<'x, P> {
+    type Value = Key<'de, P>;
+
+    fn deserialize<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
     where
-        D: Deserializer<'de>,
+        D: serde::Deserializer<'de>,
     {
-        deserializer.deserialize_str(KeyVisitor::<P>(std::marker::PhantomData))
+        deserializer.deserialize_any(KeyVisitor { context: &self })
     }
 }
 
-struct KeyVisitor<P: Property>(std::marker::PhantomData<P>);
+struct KeyVisitor<'x, P: Property> {
+    context: &'x DeserializationContext<'x, P>,
+}
 
-impl<'de, P: Property> Visitor<'de> for KeyVisitor<P> {
+impl<'de, 'x, P: Property> Visitor<'de> for KeyVisitor<'x, P> {
     type Value = Key<'de, P>;
 
     fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
         formatter.write_str("a string")
     }
 
-    fn visit_borrowed_str<E>(self, value: &'de str) -> Result<Self::Value, E>
+    fn visit_borrowed_str<ERR>(self, value: &'de str) -> Result<Self::Value, ERR>
     where
-        E: de::Error,
+        ERR: de::Error,
     {
-        match P::from_str(value) {
-            Ok(word) => Ok(Key::Property(word)),
-            Err(_) => Ok(Key::Borrowed(value)),
+        match P::try_parse(self.context.parent_key, value) {
+            Some(word) => Ok(Key::Property(word)),
+            None => Ok(Key::Borrowed(value)),
         }
     }
 
-    fn visit_str<E>(self, value: &str) -> Result<Self::Value, E>
+    fn visit_str<ERR>(self, value: &str) -> Result<Self::Value, ERR>
     where
-        E: de::Error,
+        ERR: de::Error,
     {
-        match P::from_str(value) {
-            Ok(word) => Ok(Key::Property(word)),
-            Err(_) => Ok(Key::Owned(value.to_owned())),
+        match P::try_parse(self.context.parent_key, value) {
+            Some(word) => Ok(Key::Property(word)),
+            None => Ok(Key::Owned(value.to_owned())),
         }
     }
 
-    fn visit_string<E>(self, value: String) -> Result<Self::Value, E>
+    fn visit_string<ERR>(self, value: String) -> Result<Self::Value, ERR>
     where
-        E: de::Error,
+        ERR: de::Error,
     {
-        match P::from_str(&value) {
-            Ok(word) => Ok(Key::Property(word)),
-            Err(_) => Ok(Key::Owned(value)),
+        match P::try_parse(self.context.parent_key, &value) {
+            Some(word) => Ok(Key::Property(word)),
+            None => Ok(Key::Owned(value)),
         }
     }
 }
@@ -73,7 +79,7 @@ impl<P: Property> Serialize for Key<'_, P> {
     where
         S: Serializer,
     {
-        serializer.serialize_str(self.as_ref())
+        serializer.serialize_str(self.to_string().as_ref())
     }
 }
 
@@ -83,32 +89,24 @@ impl<P: Property> PartialEq for Key<'_, P> {
             (Key::Borrowed(s1), Key::Borrowed(s2)) => s1 == s2,
             (Key::Owned(s1), Key::Owned(s2)) => s1 == s2,
             (Key::Property(w1), Key::Property(w2)) => w1 == w2,
-            _ => self.as_ref() == other.as_ref(),
+            _ => self.to_string() == other.to_string(),
         }
     }
 }
 
 impl<P: Property> Eq for Key<'_, P> {}
 
-impl<P: Property> Deref for Key<'_, P> {
-    type Target = str;
-
-    fn deref(&self) -> &Self::Target {
-        self.as_ref()
-    }
-}
-
 impl<P: Property> PartialEq<&str> for Key<'_, P> {
     fn eq(&self, other: &&str) -> bool {
-        self.as_ref() == *other
+        self.to_string() == *other
     }
 }
 
 impl<'a, P: Property> From<&'a str> for Key<'a, P> {
     fn from(s: &'a str) -> Self {
-        match P::from_str(s) {
-            Ok(word) => Key::Property(word),
-            Err(_) => Key::Borrowed(s),
+        match P::try_parse(None, s) {
+            Some(word) => Key::Property(word),
+            None => Key::Borrowed(s),
         }
     }
 }
@@ -118,17 +116,25 @@ impl<'a, P: Property> From<Key<'a, P>> for Cow<'a, str> {
         match s {
             Key::Borrowed(s) => Cow::Borrowed(s),
             Key::Owned(s) => Cow::Owned(s),
-            Key::Property(word) => Cow::Owned(word.as_ref().to_string()),
+            Key::Property(word) => word.to_string(),
         }
     }
 }
 
-impl<P: Property> AsRef<str> for Key<'_, P> {
-    fn as_ref(&self) -> &str {
+impl<P: Property> Key<'_, P> {
+    pub fn to_string(&self) -> Cow<'_, str> {
         match self {
-            Key::Borrowed(s) => s,
+            Key::Borrowed(s) => Cow::Borrowed(s),
+            Key::Owned(s) => Cow::Borrowed(s.as_str()),
+            Key::Property(word) => word.to_string(),
+        }
+    }
+
+    pub fn into_string(self) -> String {
+        match self {
+            Key::Borrowed(s) => s.to_owned(),
             Key::Owned(s) => s,
-            Key::Property(word) => word.as_ref(),
+            Key::Property(word) => word.to_string().into_owned(),
         }
     }
 }

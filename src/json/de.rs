@@ -5,19 +5,19 @@
  */
 
 use super::value::Value;
-use crate::json::key::Key;
+use crate::json::key::{self, Key};
 use crate::json::object_vec::ObjectAsVec;
 use crate::{Element, Property};
 use serde::de::{Deserialize, DeserializeSeed, MapAccess, SeqAccess, Visitor};
 use std::borrow::Cow;
 
 #[derive(Clone, Default)]
-struct DeserializationContext<'x, P: Property, E: Element> {
+pub(crate) struct DeserializationContext<'x, P: Property, E: Element> {
     parent_key: Option<&'x Key<'x, P>>,
     phantom: std::marker::PhantomData<E>,
 }
 
-impl<'de, P: Property, E: Element> Deserialize<'de> for Value<'de, P, E> {
+impl<'de, P: Property, E: Element<Property = P>> Deserialize<'de> for Value<'de, P, E> {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: serde::Deserializer<'de>,
@@ -30,7 +30,9 @@ impl<'de, P: Property, E: Element> Deserialize<'de> for Value<'de, P, E> {
     }
 }
 
-impl<'de, 'x, P: Property, E: Element> DeserializeSeed<'de> for DeserializationContext<'x, P, E> {
+impl<'de, 'x, P: Property, E: Element<Property = P>> DeserializeSeed<'de>
+    for DeserializationContext<'x, P, E>
+{
     type Value = Value<'de, P, E>;
 
     fn deserialize<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
@@ -45,7 +47,7 @@ struct ContextualVisitor<'x, P: Property, E: Element> {
     context: &'x DeserializationContext<'x, P, E>,
 }
 
-impl<'de, 'x, P: Property, E: Element> Visitor<'de> for ContextualVisitor<'x, P, E> {
+impl<'de, 'x, P: Property, E: Element<Property = P>> Visitor<'de> for ContextualVisitor<'x, P, E> {
     type Value = Value<'de, P, E>;
 
     fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
@@ -92,7 +94,7 @@ impl<'de, 'x, P: Property, E: Element> Visitor<'de> for ContextualVisitor<'x, P,
         if let Some(element) = self
             .context
             .parent_key
-            .and_then(|key| E::try_parse(key, &v))
+            .and_then(|key| E::try_parse::<P>(key, &v))
         {
             Ok(Value::Element(element))
         } else {
@@ -105,7 +107,11 @@ impl<'de, 'x, P: Property, E: Element> Visitor<'de> for ContextualVisitor<'x, P,
     where
         ERR: serde::de::Error,
     {
-        if let Some(element) = self.context.parent_key.and_then(|key| E::try_parse(key, v)) {
+        if let Some(element) = self
+            .context
+            .parent_key
+            .and_then(|key| E::try_parse::<P>(key, v))
+        {
             Ok(Value::Element(element))
         } else {
             Ok(Value::Str(Cow::Owned(v.to_owned())))
@@ -117,7 +123,11 @@ impl<'de, 'x, P: Property, E: Element> Visitor<'de> for ContextualVisitor<'x, P,
     where
         ERR: serde::de::Error,
     {
-        if let Some(element) = self.context.parent_key.and_then(|key| E::try_parse(key, v)) {
+        if let Some(element) = self
+            .context
+            .parent_key
+            .and_then(|key| E::try_parse::<P>(key, v))
+        {
             Ok(Value::Element(element))
         } else {
             Ok(Value::Str(Cow::Borrowed(v)))
@@ -229,7 +239,9 @@ impl<'de, 'x, P: Property, E: Element> Visitor<'de> for ContextualVisitor<'x, P,
     {
         let mut values = Vec::with_capacity(visitor.size_hint().unwrap_or(0));
 
-        while let Some(key) = visitor.next_key()? {
+        while let Some(key) = visitor.next_key_seed(key::DeserializationContext {
+            parent_key: self.context.parent_key,
+        })? {
             let value = visitor.next_value_seed(DeserializationContext {
                 parent_key: Some(&key),
                 phantom: std::marker::PhantomData,

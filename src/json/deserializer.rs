@@ -329,8 +329,14 @@ impl<'de, 'a: 'de, 'ctx: 'de, P: Property, E: Element> MapAccess<'de>
     {
         if let Some((key, value)) = self.iter.next() {
             self.value = Some(value);
-            seed.deserialize(de::value::BorrowedStrDeserializer::new(key))
-                .map(Some)
+            match key.to_string() {
+                Cow::Borrowed(key) => seed
+                    .deserialize(de::value::BorrowedStrDeserializer::new(key))
+                    .map(Some),
+                Cow::Owned(key) => seed
+                    .deserialize(de::value::StringDeserializer::new(key))
+                    .map(Some),
+            }
         } else {
             Ok(None)
         }
