@@ -329,8 +329,14 @@ impl<'de, 'a: 'de, 'ctx: 'de, P: Property, E: Element> MapAccess<'de>
     {
         if let Some((key, value)) = self.iter.next() {
             self.value = Some(value);
-            seed.deserialize(de::value::BorrowedStrDeserializer::new(key))
-                .map(Some)
+            match key.to_string() {
+                Cow::Borrowed(key) => seed
+                    .deserialize(de::value::BorrowedStrDeserializer::new(key))
+                    .map(Some),
+                Cow::Owned(key) => seed
+                    .deserialize(de::value::StringDeserializer::new(key))
+                    .map(Some),
+            }
         } else {
             Ok(None)
         }
@@ -354,7 +360,7 @@ mod tests {
     use serde::de::{IgnoredAny, IntoDeserializer};
 
     use crate::json::num::N;
-    use crate::{Null, Value};
+    use crate::{Key, Null, Value};
 
     // Basic deserialization test for null value
     #[test]
@@ -449,9 +455,9 @@ mod tests {
     fn test_deserialize_map() {
         let value: Value<'_, Null, Null> = Value::Object(
             vec![
-                ("key1", Value::Number(N::PosInt(1).into())),
-                ("key2", Value::Number(N::PosInt(2).into())),
-                ("key3", Value::Number(N::PosInt(3).into())),
+                (Key::Borrowed("key1"), Value::Number(N::PosInt(1).into())),
+                (Key::Borrowed("key2"), Value::Number(N::PosInt(2).into())),
+                (Key::Borrowed("key3"), Value::Number(N::PosInt(3).into())),
             ]
             .into(),
         );
@@ -484,7 +490,7 @@ mod tests {
     fn test_deserialize_nested() {
         let value: Value<'_, Null, Null> = Value::Object(
             vec![(
-                "numbers",
+                Key::Borrowed("numbers"),
                 Value::Array(vec![
                     Value::Number(N::PosInt(1).into()),
                     Value::Number(N::PosInt(2).into()),

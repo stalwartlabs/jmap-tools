@@ -21,19 +21,23 @@ pub enum Value<'ctx, P: Property, E: Element> {
     Object(ObjectAsVec<'ctx, P, E>),
 }
 
-pub trait Property:
-    FromStr + AsRef<str> + Debug + Display + Clone + PartialEq + Eq + PartialOrd + Ord + Hash
-{
+pub trait Property: Debug + Clone + PartialEq + Eq + PartialOrd + Ord + Hash {
+    fn try_parse(key: Option<&Key<'_, Self>>, value: &str) -> Option<Self>;
+    fn to_string(&self) -> Cow<'static, str>;
 }
 
 pub trait Element: Clone + PartialEq + Eq + Hash + Debug + Sized {
-    fn try_parse<P>(key: &Key<'_, P>, value: &str) -> Option<Self>
-    where
-        P: Property;
+    type Property: Property;
+
+    fn try_parse<P>(key: &Key<'_, Self::Property>, value: &str) -> Option<Self>;
     fn to_string(&self) -> Cow<'_, str>;
 }
 
-impl<'ctx, P: Property, E: Element> Value<'ctx, P, E> {
+impl<'ctx, P: Property, E: Element<Property = P>> Value<'ctx, P, E> {
+    pub fn parse_json(json: &'ctx str) -> Result<Self, String> {
+        serde_json::from_str(json).map_err(|e| e.to_string())
+    }
+
     /// Returns a reference to the value corresponding to the key.
     #[inline]
     pub fn get<I: Index<'ctx, P, E>>(&'ctx self, index: I) -> &'ctx Value<'ctx, P, E> {
@@ -130,6 +134,20 @@ impl<'ctx, P: Property, E: Element> Value<'ctx, P, E> {
         }
     }
 
+    pub fn into_object(self) -> Option<ObjectAsVec<'ctx, P, E>> {
+        match self {
+            Value::Object(obj) => Some(obj),
+            _ => None,
+        }
+    }
+
+    pub fn into_element(self) -> Option<E> {
+        match self {
+            Value::Element(element) => Some(element),
+            _ => None,
+        }
+    }
+
     /// If the Value is a Boolean, returns the associated bool. Returns None otherwise.
     pub fn as_bool(&self) -> Option<bool> {
         match self {
@@ -139,9 +157,18 @@ impl<'ctx, P: Property, E: Element> Value<'ctx, P, E> {
     }
 
     /// If the Value is a String, returns the associated str. Returns None otherwise.
-    pub fn as_str(&self) -> Option<&str> {
+    pub fn as_str(&self) -> Option<Cow<'_, str>> {
         match self {
-            Value::Str(text) => Some(text),
+            Value::Str(text) => Some(text.as_ref().into()),
+            Value::Element(element) => Some(element.to_string()),
+            _ => None,
+        }
+    }
+
+    pub fn into_string(self) -> Option<String> {
+        match self {
+            Value::Str(text) => Some(text.into_owned()),
+            Value::Element(element) => Some(element.to_string().into_owned()),
             _ => None,
         }
     }
@@ -337,17 +364,25 @@ impl FromStr for Null {
     }
 }
 
-impl Property for Null {}
+impl Property for Null {
+    fn try_parse(_: Option<&Key<'_, Self>>, _: &str) -> Option<Self> {
+        None
+    }
+
+    fn to_string(&self) -> Cow<'static, str> {
+        "".into()
+    }
+}
+
 impl Element for Null {
-    fn try_parse<P>(_key: &Key<'_, P>, _value: &str) -> Option<Self>
-    where
-        P: Property,
-    {
+    type Property = Null;
+
+    fn try_parse<P>(_: &Key<'_, Self::Property>, _: &str) -> Option<Self> {
         None
     }
 
     fn to_string(&self) -> Cow<'_, str> {
-        Cow::Borrowed("null")
+        "".into()
     }
 }
 

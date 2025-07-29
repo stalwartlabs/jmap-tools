@@ -26,19 +26,19 @@ pub struct ObjectAsVec<'ctx, P: Property, E: Element>(
     pub(crate) Vec<(Key<'ctx, P>, Value<'ctx, P, E>)>,
 );
 
-impl<'ctx, P: Property, E: Element> From<Vec<(&'ctx str, Value<'ctx, P, E>)>>
+impl<'ctx, P: Property, E: Element> From<Vec<(Key<'ctx, P>, Value<'ctx, P, E>)>>
     for ObjectAsVec<'ctx, P, E>
 {
-    fn from(vec: Vec<(&'ctx str, Value<'ctx, P, E>)>) -> Self {
-        Self::from_iter(vec)
+    fn from(vec: Vec<(Key<'ctx, P>, Value<'ctx, P, E>)>) -> Self {
+        ObjectAsVec(vec)
     }
 }
 
-impl<'ctx, P: Property, E: Element> FromIterator<(&'ctx str, Value<'ctx, P, E>)>
+impl<'ctx, P: Property, E: Element> FromIterator<(Key<'ctx, P>, Value<'ctx, P, E>)>
     for ObjectAsVec<'ctx, P, E>
 {
-    fn from_iter<T: IntoIterator<Item = (&'ctx str, Value<'ctx, P, E>)>>(iter: T) -> Self {
-        Self(iter.into_iter().map(|(k, v)| (k.into(), v)).collect())
+    fn from_iter<T: IntoIterator<Item = (Key<'ctx, P>, Value<'ctx, P, E>)>>(iter: T) -> Self {
+        Self(iter.into_iter().collect())
     }
 }
 
@@ -90,14 +90,10 @@ impl<'ctx, P: Property, E: Element> ObjectAsVec<'ctx, P, E> {
     /// As this is backed by a Vec, this searches linearly through the Vec as may be much more
     /// expensive than a `Hashmap` for larger Objects.
     #[inline]
-    pub fn get_key_value(&self, key: &Key<'_, P>) -> Option<(&str, &Value<'ctx, P, E>)> {
-        self.0.iter().find_map(|(k, v)| {
-            if k == key {
-                Some((k.as_ref(), v))
-            } else {
-                None
-            }
-        })
+    pub fn get_key_value(&self, key: &Key<'_, P>) -> Option<(&Key<'_, P>, &Value<'ctx, P, E>)> {
+        self.0
+            .iter()
+            .find_map(|(k, v)| if k == key { Some((k, v)) } else { None })
     }
 
     /// An iterator visiting all key-value pairs
@@ -212,7 +208,7 @@ impl<'ctx, P: Property, E: Element> From<ObjectAsVec<'ctx, P, E>>
 {
     fn from(val: ObjectAsVec<'ctx, P, E>) -> Self {
         val.iter()
-            .map(|(key, val)| (key.to_string(), val.into()))
+            .map(|(key, val)| (key.to_string().into_owned(), val.into()))
             .collect()
     }
 }
@@ -221,7 +217,7 @@ impl<'ctx, P: Property, E: Element> From<&ObjectAsVec<'ctx, P, E>>
 {
     fn from(val: &ObjectAsVec<'ctx, P, E>) -> Self {
         val.iter()
-            .map(|(key, val)| (key.as_ref().to_owned(), val.into()))
+            .map(|(key, val)| (key.to_string().into_owned(), val.into()))
             .collect()
     }
 }
