@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0 OR MIT
  */
 
-use crate::{JsonPointer, JsonPointerItem};
+use crate::{JsonPointer, JsonPointerItem, Key, Property};
 use std::fmt::Display;
 
 enum TokenType {
@@ -15,15 +15,15 @@ enum TokenType {
     Escaped,
 }
 
-struct State {
+struct State<P: Property> {
     num: u64,
     buf: Vec<u8>,
     token: TokenType,
     start_pos: usize,
-    path: Vec<JsonPointerItem>,
+    path: Vec<JsonPointerItem<P>>,
 }
 
-impl JsonPointer {
+impl<P: Property> JsonPointer<P> {
     pub fn parse(value: &str) -> Self {
         let mut state = State {
             num: 0,
@@ -98,13 +98,22 @@ impl JsonPointer {
     }
 }
 
-impl State {
+impl<P: Property> State<P> {
     pub fn process(&mut self) {
         match self.token {
             TokenType::String => {
-                self.path.push(JsonPointerItem::String(
-                    String::from_utf8(std::mem::take(&mut self.buf)).unwrap(),
-                ));
+                let item = std::str::from_utf8(&self.buf).unwrap_or_default();
+                match P::try_parse(self.path.last().and_then(|item| item.as_key()), item) {
+                    Some(prop) => {
+                        self.path.push(JsonPointerItem::Key(Key::Property(prop)));
+                    }
+                    None => {
+                        self.path
+                            .push(JsonPointerItem::Key(Key::Owned(item.to_string())));
+                    }
+                }
+
+                self.buf.clear();
             }
             TokenType::Number => {
                 self.path.push(JsonPointerItem::Number(self.num));
@@ -114,14 +123,14 @@ impl State {
                 self.path.push(JsonPointerItem::Wildcard);
             }
             TokenType::Unknown if self.start_pos > 0 => {
-                self.path.push(JsonPointerItem::String(String::new()));
+                self.path.push(JsonPointerItem::Key("".into()));
             }
             _ => (),
         }
     }
 }
 
-impl Display for JsonPointer {
+impl<P: Property> Display for JsonPointer<P> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         for (i, ptr) in self.0.iter().enumerate() {
             if i > 0 {
@@ -133,12 +142,12 @@ impl Display for JsonPointer {
     }
 }
 
-impl Display for JsonPointerItem {
+impl<P: Property> Display for JsonPointerItem<P> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             JsonPointerItem::Root => write!(f, "/"),
             JsonPointerItem::Wildcard => write!(f, "*"),
-            JsonPointerItem::String(s) => write!(f, "{}", s),
+            JsonPointerItem::Key(s) => write!(f, "{}", s.to_string()),
             JsonPointerItem::Number(n) => write!(f, "{}", n),
         }
     }

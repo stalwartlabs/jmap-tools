@@ -3,12 +3,6 @@
 version = 4
 
 [[package]]
-name = "downcast-rs"
-version = "2.0.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ea8a8b81cacc08888170eef4d13b775126db426d0b348bee9d18c2c1eaf123cf"
-
-[[package]]
 name = "hashify"
 version = "0.2.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -29,7 +23,6 @@ checksum = "4a5f13b858c8d314ee3e8f639011f7ccefe71f97f96e50151fb991f267928e2c"
 name = "jmap-tools"
 version = "0.1.0"
 dependencies = [
- "downcast-rs",
  "hashify",
  "serde",
  "serde_json",

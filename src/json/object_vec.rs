@@ -102,6 +102,13 @@ impl<'ctx, P: Property, E: Element> ObjectAsVec<'ctx, P, E> {
         self.0.iter().map(|(k, v)| (k, v))
     }
 
+    #[inline]
+    pub fn iter_mut(
+        &mut self,
+    ) -> impl Iterator<Item = (&mut Key<'ctx, P>, &mut Value<'ctx, P, E>)> {
+        self.0.iter_mut().map(|(k, v)| (k, v))
+    }
+
     /// Returns the number of elements in the object
     #[inline]
     pub fn len(&self) -> usize {
@@ -136,6 +143,16 @@ impl<'ctx, P: Property, E: Element> ObjectAsVec<'ctx, P, E> {
         self.0.iter().any(|(k, _)| k == key)
     }
 
+    #[inline]
+    pub fn contains_key_value(&self, key: &Key<'ctx, P>, value: &Value<'ctx, P, E>) -> bool {
+        self.0.iter().any(|(k, v)| k == key && v == value)
+    }
+
+    #[inline]
+    pub fn contains_any_key(&self, keys: &[Key<'ctx, P>]) -> bool {
+        self.0.iter().any(|(k, _)| keys.contains(k))
+    }
+
     /// Inserts a key-value pair into the object.
     /// If the object did not have this key present, `None` is returned.
     /// If the object did have this key present, the value is updated, and the old value is
@@ -147,11 +164,12 @@ impl<'ctx, P: Property, E: Element> ObjectAsVec<'ctx, P, E> {
     #[inline]
     pub fn insert(
         &mut self,
-        key: &'ctx str,
+        key: impl Into<Key<'ctx, P>>,
         value: Value<'ctx, P, E>,
     ) -> Option<Value<'ctx, P, E>> {
+        let key = key.into();
         for (k, v) in &mut self.0 {
-            if *k == key {
+            if k == &key {
                 return Some(std::mem::replace(v, value));
             }
         }
@@ -169,16 +187,42 @@ impl<'ctx, P: Property, E: Element> ObjectAsVec<'ctx, P, E> {
     #[inline]
     pub fn insert_or_get_mut(
         &mut self,
-        key: &'ctx str,
+        key: impl Into<Key<'ctx, P>>,
         value: Value<'ctx, P, E>,
     ) -> &mut Value<'ctx, P, E> {
+        let key = key.into();
         // get position to circumvent lifetime issue
         if let Some(pos) = self.0.iter_mut().position(|(k, _)| *k == key) {
             &mut self.0[pos].1
         } else {
-            self.0.push((key.into(), value));
+            self.0.push((key, value));
             &mut self.0.last_mut().unwrap().1
         }
+    }
+
+    #[inline]
+    pub fn insert_unchecked(&mut self, key: impl Into<Key<'ctx, P>>, value: Value<'ctx, P, E>) {
+        let key = key.into();
+        self.0.push((key, value));
+    }
+
+    pub fn insert_named(&mut self, key: Option<String>, value: Value<'ctx, P, E>) -> String {
+        let len = self.0.len();
+        let mut key = key.unwrap_or_else(|| format!("k{}", len + 1));
+
+        if self.contains_key(&Key::Borrowed(key.as_str())) {
+            key = format!("{}-{}", key, len + 1);
+        }
+
+        self.0.push((Key::Owned(key.clone()), value));
+        key
+    }
+
+    pub fn extend<I>(&mut self, iter: I)
+    where
+        I: IntoIterator<Item = (Key<'ctx, P>, Value<'ctx, P, E>)>,
+    {
+        self.0.extend(iter);
     }
 
     /// Inserts a key-value pair into the object and returns the mutable reference of the inserted
@@ -194,10 +238,11 @@ impl<'ctx, P: Property, E: Element> ObjectAsVec<'ctx, P, E> {
     #[inline]
     pub fn insert_unchecked_and_get_mut(
         &mut self,
-        key: &'ctx str,
+        key: impl Into<Key<'ctx, P>>,
         value: Value<'ctx, P, E>,
     ) -> &mut Value<'ctx, P, E> {
-        self.0.push((key.into(), value));
+        let key = key.into();
+        self.0.push((key, value));
         let idx = self.0.len() - 1;
         &mut self.0[idx].1
     }
