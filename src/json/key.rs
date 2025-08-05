@@ -116,7 +116,7 @@ impl<'x, P: Property> From<Key<'x, P>> for Cow<'x, str> {
         match s {
             Key::Borrowed(s) => Cow::Borrowed(s),
             Key::Owned(s) => Cow::Owned(s),
-            Key::Property(word) => word.to_string(),
+            Key::Property(word) => word.to_cow(),
         }
     }
 }
@@ -135,7 +135,7 @@ impl<P: Property> Key<'_, P> {
         match self {
             Key::Borrowed(s) => Cow::Borrowed(s),
             Key::Owned(s) => Cow::Borrowed(s.as_str()),
-            Key::Property(word) => word.to_string(),
+            Key::Property(word) => word.to_cow(),
         }
     }
 
@@ -143,7 +143,7 @@ impl<P: Property> Key<'_, P> {
         match self {
             Key::Borrowed(s) => s.to_owned(),
             Key::Owned(s) => s,
-            Key::Property(word) => word.to_string().into_owned(),
+            Key::Property(word) => word.to_cow().into_owned(),
         }
     }
 
@@ -151,6 +151,14 @@ impl<P: Property> Key<'_, P> {
         match self {
             Key::Property(word) => Some(word),
             _ => None,
+        }
+    }
+
+    pub fn into_owned(self) -> Key<'static, P> {
+        match self {
+            Key::Borrowed(s) => Key::Owned(s.to_owned()),
+            Key::Owned(s) => Key::Owned(s),
+            Key::Property(word) => Key::Property(word),
         }
     }
 }

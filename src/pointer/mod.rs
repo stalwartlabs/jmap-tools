@@ -7,7 +7,12 @@
 pub(crate) mod eval;
 pub(crate) mod parser;
 
-use std::{borrow::Cow, fmt::Debug, iter::Peekable, slice::Iter};
+use std::{
+    borrow::Cow,
+    fmt::{Debug, Display, Formatter},
+    iter::Peekable,
+    slice::Iter,
+};
 
 use crate::{Element, Key, Property, Value};
 
@@ -25,12 +30,12 @@ pub trait JsonPointerHandler<'x, P: Property, E: Element>: Debug {
     fn to_value<'y>(&'y self) -> Cow<'y, Value<'x, P, E>>;
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct JsonPointer<P: Property>(pub(crate) Vec<JsonPointerItem<P>>);
 
 pub type JsonPointerIter<'x, P> = Peekable<Iter<'x, JsonPointerItem<P>>>;
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum JsonPointerItem<P: Property> {
     Root,
     Wildcard,
@@ -64,6 +69,14 @@ impl<P: Property> JsonPointer<P> {
         }
         encoded
     }
+
+    pub fn first(&self) -> Option<&JsonPointerItem<P>> {
+        self.0.first()
+    }
+
+    pub fn last(&self) -> Option<&JsonPointerItem<P>> {
+        self.0.last()
+    }
 }
 
 impl<P: Property> JsonPointerItem<P> {
@@ -72,5 +85,31 @@ impl<P: Property> JsonPointerItem<P> {
             JsonPointerItem::Key(key) => Some(key),
             _ => None,
         }
+    }
+}
+
+impl<P: Property> Display for JsonPointer<P> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        for (i, ptr) in self.0.iter().enumerate() {
+            if i > 0 {
+                write!(f, "/")?;
+            }
+
+            match ptr {
+                JsonPointerItem::Root => {}
+                JsonPointerItem::Wildcard => write!(f, "*")?,
+                JsonPointerItem::Key(k) => {
+                    for c in k.to_string().chars() {
+                        match c {
+                            '~' => write!(f, "~0")?,
+                            '/' => write!(f, "~1")?,
+                            _ => write!(f, "{}", c)?,
+                        }
+                    }
+                }
+                JsonPointerItem::Number(n) => write!(f, "{}", n)?,
+            }
+        }
+        Ok(())
     }
 }

@@ -21,7 +21,7 @@ impl<P: Property, E: Element> Serialize for Value<'_, P, E> {
             Value::Str(s) => serializer.serialize_str(s),
             Value::Array(v) => serializer.collect_seq(v),
             Value::Object(m) => m.serialize(serializer),
-            Value::Element(e) => serializer.serialize_str(e.to_string().as_ref()),
+            Value::Element(e) => serializer.serialize_str(e.to_cow().as_ref()),
         }
     }
 }
