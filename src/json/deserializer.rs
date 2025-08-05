@@ -46,7 +46,7 @@ impl<'de, P: Property, E: Element> Deserializer<'de> for &'de Value<'_, P, E> {
                 let map = MapDeserializer::new(map.as_vec().as_slice());
                 visitor.visit_map(map)
             }
-            Value::Element(e) => match e.to_string() {
+            Value::Element(e) => match e.to_cow() {
                 Cow::Borrowed(s) => visitor.visit_borrowed_str(s),
                 Cow::Owned(s) => visitor.visit_string(s),
             },

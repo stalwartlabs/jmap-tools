@@ -23,14 +23,14 @@ pub enum Value<'ctx, P: Property, E: Element> {
 
 pub trait Property: Debug + Clone + PartialEq + Eq + PartialOrd + Ord + Hash {
     fn try_parse(key: Option<&Key<'_, Self>>, value: &str) -> Option<Self>;
-    fn to_string(&self) -> Cow<'static, str>;
+    fn to_cow(&self) -> Cow<'static, str>;
 }
 
 pub trait Element: Clone + PartialEq + Eq + Hash + Debug + Sized {
     type Property: Property;
 
     fn try_parse<P>(key: &Key<'_, Self::Property>, value: &str) -> Option<Self>;
-    fn to_string(&self) -> Cow<'_, str>;
+    fn to_cow(&self) -> Cow<'_, str>;
 }
 
 impl<'ctx, P: Property, E: Element<Property = P>> Value<'ctx, P, E> {
@@ -177,6 +177,27 @@ impl<'ctx, P: Property, E: Element<Property = P>> Value<'ctx, P, E> {
         }
     }
 
+    pub fn into_owned(self) -> Value<'static, P, E> {
+        match self {
+            Value::Null => Value::Null,
+            Value::Bool(b) => Value::Bool(b),
+            Value::Number(n) => Value::Number(n),
+            Value::Element(e) => Value::Element(e),
+            Value::Str(s) => Value::Str(Cow::Owned(s.into_owned())),
+            Value::Array(arr) => {
+                let owned_arr: Vec<Value<'static, P, E>> =
+                    arr.into_iter().map(|v| v.into_owned()).collect();
+                Value::Array(owned_arr)
+            }
+            Value::Object(obj) => Value::Object(
+                obj.into_vec()
+                    .into_iter()
+                    .map(|(k, v)| (k.into_owned(), v.into_owned()))
+                    .collect(),
+            ),
+        }
+    }
+
     pub fn into_expanded_object(self) -> impl Iterator<Item = (Key<'ctx, P>, Value<'ctx, P, E>)> {
         self.into_object()
             .map(|obj| obj.into_vec())
@@ -211,7 +232,7 @@ impl<'ctx, P: Property, E: Element<Property = P>> Value<'ctx, P, E> {
     pub fn as_str(&self) -> Option<Cow<'_, str>> {
         match self {
             Value::Str(text) => Some(text.as_ref().into()),
-            Value::Element(element) => Some(element.to_string()),
+            Value::Element(element) => Some(element.to_cow()),
             _ => None,
         }
     }
@@ -219,7 +240,7 @@ impl<'ctx, P: Property, E: Element<Property = P>> Value<'ctx, P, E> {
     pub fn into_string(self) -> Option<String> {
         match self {
             Value::Str(text) => Some(text.into_owned()),
-            Value::Element(element) => Some(element.to_string().into_owned()),
+            Value::Element(element) => Some(element.to_cow().into_owned()),
             _ => None,
         }
     }
@@ -304,7 +325,7 @@ impl<P: Property, E: Element> Debug for Value<'_, P, E> {
                 formatter.write_str("Object ")?;
                 Debug::fmt(map, formatter)
             }
-            Value::Element(element) => write!(formatter, "Element({})", element.to_string()),
+            Value::Element(element) => write!(formatter, "Element({})", element.to_cow()),
         }
     }
 }
@@ -345,7 +366,7 @@ impl<P: Property, E: Element> From<Value<'_, P, E>> for serde_json::Value {
                 serde_json::Value::Array(vals.into_iter().map(|val| val.into()).collect())
             }
             Value::Object(vals) => serde_json::Value::Object(vals.into()),
-            Value::Element(element) => serde_json::Value::String(element.to_string().to_string()),
+            Value::Element(element) => serde_json::Value::String(element.to_cow().to_string()),
         }
     }
 }
@@ -361,7 +382,7 @@ impl<P: Property, E: Element> From<&Value<'_, P, E>> for serde_json::Value {
                 serde_json::Value::Array(vals.iter().map(|val| val.into()).collect())
             }
             Value::Object(vals) => serde_json::Value::Object(vals.into()),
-            Value::Element(element) => serde_json::Value::String(element.to_string().to_string()),
+            Value::Element(element) => serde_json::Value::String(element.to_cow().to_string()),
         }
     }
 }
@@ -426,7 +447,7 @@ impl Property for Null {
         None
     }
 
-    fn to_string(&self) -> Cow<'static, str> {
+    fn to_cow(&self) -> Cow<'static, str> {
         "".into()
     }
 }
@@ -438,7 +459,7 @@ impl Element for Null {
         None
     }
 
-    fn to_string(&self) -> Cow<'_, str> {
+    fn to_cow(&self) -> Cow<'_, str> {
         "".into()
     }
 }

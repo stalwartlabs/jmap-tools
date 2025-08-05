@@ -5,7 +5,6 @@
  */
 
 use crate::{JsonPointer, JsonPointerItem, Key, Property};
-use std::fmt::Display;
 
 enum TokenType {
     Unknown,
@@ -126,29 +125,6 @@ impl<P: Property> State<P> {
                 self.path.push(JsonPointerItem::Key("".into()));
             }
             _ => (),
-        }
-    }
-}
-
-impl<P: Property> Display for JsonPointer<P> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        for (i, ptr) in self.0.iter().enumerate() {
-            if i > 0 {
-                write!(f, "/")?;
-            }
-            write!(f, "{}", ptr)?;
-        }
-        Ok(())
-    }
-}
-
-impl<P: Property> Display for JsonPointerItem<P> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            JsonPointerItem::Root => write!(f, "/"),
-            JsonPointerItem::Wildcard => write!(f, "*"),
-            JsonPointerItem::Key(s) => write!(f, "{}", s.to_string()),
-            JsonPointerItem::Number(n) => write!(f, "{}", n),
         }
     }
 }
