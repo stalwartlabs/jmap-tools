@@ -34,6 +34,14 @@ pub trait Element: Clone + PartialEq + Eq + Hash + Debug + Sized {
 }
 
 impl<'ctx, P: Property, E: Element<Property = P>> Value<'ctx, P, E> {
+    pub fn new_boolean_set(set: impl IntoIterator<Item = (Key<'ctx, P>, bool)>) -> Self {
+        let mut obj = Vec::new();
+        for (key, value) in set {
+            obj.push((key, value.into()));
+        }
+        Value::Object(obj.into())
+    }
+
     pub fn parse_json(json: &'ctx str) -> Result<Self, String> {
         serde_json::from_str(json).map_err(|e| e.to_string())
     }
@@ -42,6 +50,20 @@ impl<'ctx, P: Property, E: Element<Property = P>> Value<'ctx, P, E> {
     #[inline]
     pub fn get<I: Index<'ctx, P, E>>(&'ctx self, index: I) -> &'ctx Value<'ctx, P, E> {
         index.index_into(self).unwrap_or(&Value::Null)
+    }
+
+    pub fn is_object_and_contains_key(&self, key: &Key<'_, P>) -> bool {
+        match self {
+            Value::Object(obj) => obj.contains_key(key),
+            _ => false,
+        }
+    }
+
+    pub fn is_object_and_contains_any_key(&self, keys: &[Key<'_, P>]) -> bool {
+        match self {
+            Value::Object(obj) => obj.contains_any_key(keys),
+            _ => false,
+        }
     }
 
     /// Returns true if `Value` is Value::Null.
@@ -126,8 +148,22 @@ impl<'ctx, P: Property, E: Element<Property = P>> Value<'ctx, P, E> {
         }
     }
 
+    pub fn into_array(self) -> Option<Vec<Value<'ctx, P, E>>> {
+        match self {
+            Value::Array(arr) => Some(arr),
+            _ => None,
+        }
+    }
+
     /// If the Value is an Object, returns the associated Object. Returns None otherwise.
     pub fn as_object(&self) -> Option<&ObjectAsVec<'ctx, P, E>> {
+        match self {
+            Value::Object(obj) => Some(obj),
+            _ => None,
+        }
+    }
+
+    pub fn as_object_mut(&mut self) -> Option<&mut ObjectAsVec<'ctx, P, E>> {
         match self {
             Value::Object(obj) => Some(obj),
             _ => None,
@@ -139,6 +175,21 @@ impl<'ctx, P: Property, E: Element<Property = P>> Value<'ctx, P, E> {
             Value::Object(obj) => Some(obj),
             _ => None,
         }
+    }
+
+    pub fn into_expanded_object(self) -> impl Iterator<Item = (Key<'ctx, P>, Value<'ctx, P, E>)> {
+        self.into_object()
+            .map(|obj| obj.into_vec())
+            .unwrap_or_default()
+            .into_iter()
+    }
+
+    pub fn into_expanded_boolean_set(self) -> impl Iterator<Item = (Key<'ctx, P>, bool)> {
+        self.into_object()
+            .map(|obj| obj.into_vec())
+            .unwrap_or_default()
+            .into_iter()
+            .filter_map(|(key, value)| value.as_bool().map(|b| (key, b)))
     }
 
     pub fn into_element(self) -> Option<E> {
@@ -213,6 +264,12 @@ impl<'a, P: Property, E: Element> From<&'a str> for Value<'a, P, E> {
 impl<P: Property, E: Element> From<String> for Value<'_, P, E> {
     fn from(val: String) -> Self {
         Value::Str(Cow::Owned(val))
+    }
+}
+
+impl<'x, P: Property, E: Element> From<Cow<'x, str>> for Value<'x, P, E> {
+    fn from(val: Cow<'x, str>) -> Self {
+        Value::Str(val)
     }
 }
 
@@ -333,7 +390,7 @@ impl<'ctx, P: Property, E: Element> From<&'ctx serde_json::Value> for Value<'ctx
             serde_json::Value::Object(obj) => {
                 let mut ans = ObjectAsVec(Vec::with_capacity(obj.len()));
                 for (k, v) in obj {
-                    ans.insert(k.as_str(), v.into());
+                    ans.insert(Key::Borrowed(k.as_str()), v.into());
                 }
                 Value::Object(ans)
             }

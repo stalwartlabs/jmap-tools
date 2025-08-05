@@ -11,9 +11,9 @@ use std::borrow::Cow;
 use std::fmt;
 
 #[derive(Debug, Clone, PartialOrd, Ord, Hash)]
-pub enum Key<'a, P: Property> {
+pub enum Key<'x, P: Property> {
     Property(P),
-    Borrowed(&'a str),
+    Borrowed(&'x str),
     Owned(String),
 }
 
@@ -102,8 +102,8 @@ impl<P: Property> PartialEq<&str> for Key<'_, P> {
     }
 }
 
-impl<'a, P: Property> From<&'a str> for Key<'a, P> {
-    fn from(s: &'a str) -> Self {
+impl<'x, P: Property> From<&'x str> for Key<'x, P> {
+    fn from(s: &'x str) -> Self {
         match P::try_parse(None, s) {
             Some(word) => Key::Property(word),
             None => Key::Borrowed(s),
@@ -111,12 +111,21 @@ impl<'a, P: Property> From<&'a str> for Key<'a, P> {
     }
 }
 
-impl<'a, P: Property> From<Key<'a, P>> for Cow<'a, str> {
-    fn from(s: Key<'a, P>) -> Self {
+impl<'x, P: Property> From<Key<'x, P>> for Cow<'x, str> {
+    fn from(s: Key<'x, P>) -> Self {
         match s {
             Key::Borrowed(s) => Cow::Borrowed(s),
             Key::Owned(s) => Cow::Owned(s),
             Key::Property(word) => word.to_string(),
+        }
+    }
+}
+
+impl<'x, P: Property> From<Cow<'x, str>> for Key<'x, P> {
+    fn from(s: Cow<'x, str>) -> Self {
+        match s {
+            Cow::Borrowed(s) => Key::Borrowed(s),
+            Cow::Owned(s) => Key::Owned(s),
         }
     }
 }
@@ -136,5 +145,18 @@ impl<P: Property> Key<'_, P> {
             Key::Owned(s) => s,
             Key::Property(word) => word.to_string().into_owned(),
         }
+    }
+
+    pub fn try_into_property(self) -> Option<P> {
+        match self {
+            Key::Property(word) => Some(word),
+            _ => None,
+        }
+    }
+}
+
+impl<'x, P: Property> From<P> for Key<'x, P> {
+    fn from(word: P) -> Self {
+        Key::Property(word)
     }
 }

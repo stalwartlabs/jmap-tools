@@ -80,6 +80,22 @@ impl Number {
             N::Float(_) => false,
         }
     }
+
+    pub fn cast_to_i64(self) -> i64 {
+        match self.n {
+            N::PosInt(v) => v as i64,
+            N::NegInt(v) => v,
+            N::Float(v) => v as i64,
+        }
+    }
+
+    pub fn try_cast_to_i64(self) -> Result<i64, f64> {
+        match self.n {
+            N::PosInt(v) => Ok(v as i64),
+            N::NegInt(v) => Ok(v),
+            N::Float(v) => Err(v),
+        }
+    }
 }
 
 impl PartialEq for N {
