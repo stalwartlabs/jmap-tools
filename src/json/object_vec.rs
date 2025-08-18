@@ -54,6 +54,11 @@ impl<'ctx, P: Property, E: Element> ObjectAsVec<'ctx, P, E> {
         &self.0
     }
 
+    #[inline]
+    pub fn as_mut_vec(&mut self) -> &mut Vec<(Key<'ctx, P>, Value<'ctx, P, E>)> {
+        &mut self.0
+    }
+
     /// Access to the underlying Vec. Keys are normalized to Cow.
     #[inline]
     pub fn into_vec(self) -> Vec<(Key<'ctx, P>, Value<'ctx, P, E>)> {
@@ -70,6 +75,17 @@ impl<'ctx, P: Property, E: Element> ObjectAsVec<'ctx, P, E> {
         self.0
             .iter()
             .find_map(|(k, v)| if k == key { Some(v) } else { None })
+    }
+
+    #[inline]
+    pub fn get_ignore_case(&self, key: &str) -> Option<&Value<'ctx, P, E>> {
+        self.0.iter().find_map(|(k, v)| {
+            if k.to_string().eq_ignore_ascii_case(key) {
+                Some(v)
+            } else {
+                None
+            }
+        })
     }
 
     /// Returns a mutable reference to the value corresponding to the key, if it exists.

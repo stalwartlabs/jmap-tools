@@ -148,6 +148,13 @@ impl<'ctx, P: Property, E: Element<Property = P>> Value<'ctx, P, E> {
         }
     }
 
+    pub fn as_array_mut(&mut self) -> Option<&mut Vec<Value<'ctx, P, E>>> {
+        match self {
+            Value::Array(arr) => Some(arr),
+            _ => None,
+        }
+    }
+
     pub fn into_array(self) -> Option<Vec<Value<'ctx, P, E>>> {
         match self {
             Value::Array(arr) => Some(arr),
@@ -307,7 +314,7 @@ impl<'a, P: Property, E: Element, T: Clone + Into<Value<'a, P, E>>> From<&[T]> f
 }
 
 impl<P: Property, E: Element> Debug for Value<'_, P, E> {
-    fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Value::Null => formatter.write_str("Null"),
             Value::Bool(boolean) => write!(formatter, "Bool({})", boolean),
@@ -332,7 +339,7 @@ impl<P: Property, E: Element> Debug for Value<'_, P, E> {
 
 // We just convert to serde_json::Value to Display
 impl<P: Property, E: Element> Display for Value<'_, P, E> {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", serde_json::Value::from(self.clone()))
     }
 }
@@ -423,7 +430,7 @@ impl<'ctx, P: Property, E: Element> From<&'ctx serde_json::Value> for Value<'ctx
 pub struct Null;
 
 impl Display for Null {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "null")
     }
 }
@@ -479,7 +486,7 @@ mod tests {
             "d": {"e": "alo"}
         });
 
-        let value: Value<Null, Null> = value.into();
+        let value: Value<'_, Null, Null> = value.into();
         assert_eq!(value.get("a"), &Value::Number(1i64.into()));
         assert_eq!(value.get("b"), &Value::Str("2".into()));
         assert_eq!(value.get("c").get(0), &Value::Number(3i64.into()));
@@ -490,7 +497,7 @@ mod tests {
     #[test]
     fn number_test() -> io::Result<()> {
         let data = r#"{"val1": 123.5, "val2": 123, "val3": -123}"#;
-        let value: Value<Null, Null> = serde_json::from_str(data)?;
+        let value: Value<'_, Null, Null> = serde_json::from_str(data)?;
         assert!(value.get("val1").is_f64());
         assert!(!value.get("val1").is_u64());
         assert!(!value.get("val1").is_i64());

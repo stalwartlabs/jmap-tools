@@ -20,10 +20,10 @@ impl<'x, P: Property, E: Element> JsonPointerHandler<'x, P, E> for Value<'x, P, 
     ) {
         match pointer.next() {
             Some(JsonPointerItem::Key(key)) => {
-                if let Value::Object(map) = self {
-                    if let Some(v) = map.get(key) {
-                        v.eval_jptr(pointer, results);
-                    }
+                if let Value::Object(map) = self
+                    && let Some(v) = map.get(key)
+                {
+                    v.eval_jptr(pointer, results);
                 }
             }
             Some(JsonPointerItem::Number(n)) => match self {
@@ -147,14 +147,14 @@ where
         mut pointer: JsonPointerIter<'_, P>,
         value: Value<'y, P, E>,
     ) -> bool {
-        if let Some(JsonPointerItem::Number(n)) = pointer.next() {
-            if let Some(item) = self.get_mut(*n as usize) {
-                if pointer.peek().is_some() {
-                    return item.patch_jptr(pointer, value);
-                } else if let Ok(value) = T::try_from(value) {
-                    *item = value;
-                    return true;
-                }
+        if let Some(JsonPointerItem::Number(n)) = pointer.next()
+            && let Some(item) = self.get_mut(*n as usize)
+        {
+            if pointer.peek().is_some() {
+                return item.patch_jptr(pointer, value);
+            } else if let Ok(value) = T::try_from(value) {
+                *item = value;
+                return true;
             }
         }
         false
@@ -233,11 +233,11 @@ where
                         *item = value;
                         return true;
                     }
-                } else if pointer.next().is_none() {
-                    if let Ok(v) = T::try_from(value) {
-                        self.insert(key.into_owned(), v);
-                        return true;
-                    }
+                } else if pointer.next().is_none()
+                    && let Ok(v) = T::try_from(value)
+                {
+                    self.insert(key.into_owned(), v);
+                    return true;
                 }
             }
             Some(JsonPointerItem::Number(n)) => {
@@ -502,11 +502,11 @@ mod tests {
                         self.array = v;
                         return true;
                     }
-                } else if key == "value" {
-                    if let Ok(v) = SubObject::try_from(value) {
-                        self.value = v;
-                        return true;
-                    }
+                } else if key == "value"
+                    && let Ok(v) = SubObject::try_from(value)
+                {
+                    self.value = v;
+                    return true;
                 }
             }
 

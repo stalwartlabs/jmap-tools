@@ -1,7 +1,16 @@
 [package]
 name = "jmap-tools"
+description = "JMAP object parser with JSON Pointer querying and patching support"
 version = "0.1.0"
 edition = "2024"
+authors = [ "Stalwart Labs <hello@stalw.art>"]
+license = "Apache-2.0 OR MIT"
+repository = "https://github.com/stalwartlabs/jmap-tools"
+homepage = "https://github.com/stalwartlabs/jmap-tools"
+keywords = ["jmap", "json", "api", "tools"]
+categories = ["parser-implementations"]
+readme = "README.md"
+resolver = "2"
 
 [dependencies]
 serde = { version = "1.0", features = ["derive"] }

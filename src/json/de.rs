@@ -50,7 +50,7 @@ struct ContextualVisitor<'x, P: Property, E: Element> {
 impl<'de, 'x, P: Property, E: Element<Property = P>> Visitor<'de> for ContextualVisitor<'x, P, E> {
     type Value = Value<'de, P, E>;
 
-    fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+    fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter.write_str("any valid JSON value")
     }
 
@@ -273,7 +273,7 @@ mod tests {
             }
        "#;
 
-        let val: Value<Null, Null> = serde_json::from_str(json_obj).unwrap();
+        let val: Value<'_, Null, Null> = serde_json::from_str(json_obj).unwrap();
         assert_eq!(val.get("bool"), &Value::Bool(true));
         assert_eq!(
             val.get("string_key"),
@@ -294,7 +294,7 @@ mod tests {
             }
        "#;
 
-        let val: Value<Null, Null> = serde_json::from_str(json_obj).unwrap();
+        let val: Value<'_, Null, Null> = serde_json::from_str(json_obj).unwrap();
         assert_eq!(val.get("bool"), &Value::Bool(true));
         assert_eq!(
             val.get("string_key"),

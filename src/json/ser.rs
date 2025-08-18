@@ -56,7 +56,7 @@ mod tests {
         let json_obj =
             r#"{"bool":true,"string_key":"string_val","float":1.23,"i64":-123,"u64":123}"#;
 
-        let val1: crate::Value<Null, Null> = serde_json::from_str(json_obj).unwrap();
+        let val1: crate::Value<'_, Null, Null> = serde_json::from_str(json_obj).unwrap();
         let deser1: String = serde_json::to_string(&val1).unwrap();
         assert_eq!(deser1, json_obj);
     }
