@@ -3,6 +3,9 @@
  *
  * SPDX-License-Identifier: Apache-2.0 OR MIT
  */
+#![doc = include_str!("../README.md")]
+#![deny(rust_2018_idioms)]
+#![forbid(unsafe_code)]
 
 mod json;
 mod pointer;

@@ -148,6 +148,13 @@ impl<'ctx, P: Property, E: Element<Property = P>> Value<'ctx, P, E> {
         }
     }
 
+    pub fn as_array_mut(&mut self) -> Option<&mut Vec<Value<'ctx, P, E>>> {
+        match self {
+            Value::Array(arr) => Some(arr),
+            _ => None,
+        }
+    }
+
     pub fn into_array(self) -> Option<Vec<Value<'ctx, P, E>>> {
         match self {
             Value::Array(arr) => Some(arr),
@@ -307,7 +314,7 @@ impl<'a, P: Property, E: Element, T: Clone + Into<Value<'a, P, E>>> From<&[T]> f
 }
 
 impl<P: Property, E: Element> Debug for Value<'_, P, E> {
-    fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Value::Null => formatter.write_str("Null"),
             Value::Bool(boolean) => write!(formatter, "Bool({})", boolean),
@@ -332,7 +339,7 @@ impl<P: Property, E: Element> Debug for Value<'_, P, E> {
 
 // We just convert to serde_json::Value to Display
 impl<P: Property, E: Element> Display for Value<'_, P, E> {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", serde_json::Value::from(self.clone()))
     }
 }
@@ -423,7 +430,7 @@ impl<'ctx, P: Property, E: Element> From<&'ctx serde_json::Value> for Value<'ctx
 pub struct Null;
 
 impl Display for Null {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "null")
     }
 }

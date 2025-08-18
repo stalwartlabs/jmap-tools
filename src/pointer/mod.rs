@@ -48,6 +48,15 @@ impl<P: Property> JsonPointer<P> {
         self.0.iter().peekable()
     }
 
+    #[allow(clippy::should_implement_trait)]
+    pub fn into_iter(self) -> impl Iterator<Item = JsonPointerItem<P>> {
+        self.0.into_iter()
+    }
+
+    pub fn into_inner(self) -> Vec<JsonPointerItem<P>> {
+        self.0
+    }
+
     pub fn encode<I, T>(items: I) -> String
     where
         I: IntoIterator<Item = T>,

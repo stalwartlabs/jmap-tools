@@ -39,7 +39,7 @@ struct KeyVisitor<'x, P: Property> {
 impl<'de, 'x, P: Property> Visitor<'de> for KeyVisitor<'x, P> {
     type Value = Key<'de, P>;
 
-    fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+    fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str("a string")
     }
 
