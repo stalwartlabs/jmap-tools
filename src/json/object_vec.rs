@@ -264,6 +264,14 @@ impl<'ctx, P: Property, E: Element> ObjectAsVec<'ctx, P, E> {
     }
 }
 
+impl<'ctx, P: Property, E: Element<Property = P>> ObjectAsVec<'ctx, P, E> {
+    pub fn into_expanded_boolean_set(self) -> impl Iterator<Item = Key<'ctx, P>> {
+        self.into_vec()
+            .into_iter()
+            .filter_map(|(key, value)| value.as_bool().filter(|&b| b).map(|_| key))
+    }
+}
+
 impl<'ctx, P: Property, E: Element> From<ObjectAsVec<'ctx, P, E>>
     for serde_json::Map<String, serde_json::Value>
 {

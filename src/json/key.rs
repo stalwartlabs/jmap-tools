@@ -86,10 +86,15 @@ impl<P: Property> Serialize for Key<'_, P> {
 impl<P: Property> PartialEq for Key<'_, P> {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
-            (Key::Borrowed(s1), Key::Borrowed(s2)) => s1 == s2,
-            (Key::Owned(s1), Key::Owned(s2)) => s1 == s2,
             (Key::Property(w1), Key::Property(w2)) => w1 == w2,
-            _ => self.to_string() == other.to_string(),
+            (Key::Property(w1), Key::Borrowed(s2)) => w1.to_cow() == *s2,
+            (Key::Property(w1), Key::Owned(s2)) => w1.to_cow() == s2.as_str(),
+            (Key::Owned(s1), Key::Owned(s2)) => s1 == s2,
+            (Key::Owned(s1), Key::Borrowed(s2)) => s1 == s2,
+            (Key::Owned(s1), Key::Property(w2)) => s1.as_str() == w2.to_cow(),
+            (Key::Borrowed(s1), Key::Borrowed(s2)) => s1 == s2,
+            (Key::Borrowed(s1), Key::Owned(s2)) => s1 == s2,
+            (Key::Borrowed(s1), Key::Property(w2)) => *s1 == w2.to_cow(),
         }
     }
 }
