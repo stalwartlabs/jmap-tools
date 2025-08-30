@@ -34,6 +34,10 @@ pub trait Element: Clone + PartialEq + Eq + Hash + Debug + Sized {
 }
 
 impl<'ctx, P: Property, E: Element<Property = P>> Value<'ctx, P, E> {
+    pub fn new_object() -> Self {
+        Value::Object(ObjectAsVec::from(Vec::new()))
+    }
+
     pub fn new_boolean_set(set: impl IntoIterator<Item = (Key<'ctx, P>, bool)>) -> Self {
         let mut obj = Vec::new();
         for (key, value) in set {
@@ -212,12 +216,12 @@ impl<'ctx, P: Property, E: Element<Property = P>> Value<'ctx, P, E> {
             .into_iter()
     }
 
-    pub fn into_expanded_boolean_set(self) -> impl Iterator<Item = (Key<'ctx, P>, bool)> {
+    pub fn into_expanded_boolean_set(self) -> impl Iterator<Item = Key<'ctx, P>> {
         self.into_object()
             .map(|obj| obj.into_vec())
             .unwrap_or_default()
             .into_iter()
-            .filter_map(|(key, value)| value.as_bool().map(|b| (key, b)))
+            .filter_map(|(key, value)| value.as_bool().filter(|&b| b).map(|_| key))
     }
 
     pub fn into_element(self) -> Option<E> {

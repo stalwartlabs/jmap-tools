@@ -89,6 +89,14 @@ impl Number {
         }
     }
 
+    pub fn cast_to_u64(self) -> u64 {
+        match self.n {
+            N::PosInt(v) => v,
+            N::NegInt(v) => v.unsigned_abs(),
+            N::Float(v) => v as u64,
+        }
+    }
+
     pub fn try_cast_to_i64(self) -> Result<i64, f64> {
         match self.n {
             N::PosInt(v) => Ok(v as i64),
