@@ -554,7 +554,7 @@ mod tests {
                 match s.to_string().as_ref() {
                     "text" if !has_next => {
                         if let Some(text) = value.into_string() {
-                            self.text = text;
+                            self.text = text.into_owned();
                             return true;
                         }
                     }
