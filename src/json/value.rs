@@ -30,7 +30,7 @@ pub trait Element: Clone + PartialEq + Eq + Hash + Debug + Sized {
     type Property: Property;
 
     fn try_parse<P>(key: &Key<'_, Self::Property>, value: &str) -> Option<Self>;
-    fn to_cow(&self) -> Cow<'_, str>;
+    fn to_cow(&self) -> Cow<'static, str>;
 }
 
 impl<'ctx, P: Property, E: Element<Property = P>> Value<'ctx, P, E> {
@@ -248,10 +248,10 @@ impl<'ctx, P: Property, E: Element<Property = P>> Value<'ctx, P, E> {
         }
     }
 
-    pub fn into_string(self) -> Option<String> {
+    pub fn into_string(self) -> Option<Cow<'ctx, str>> {
         match self {
-            Value::Str(text) => Some(text.into_owned()),
-            Value::Element(element) => Some(element.to_cow().into_owned()),
+            Value::Str(text) => Some(text),
+            Value::Element(element) => Some(element.to_cow()),
             _ => None,
         }
     }
@@ -470,7 +470,7 @@ impl Element for Null {
         None
     }
 
-    fn to_cow(&self) -> Cow<'_, str> {
+    fn to_cow(&self) -> Cow<'static, str> {
         "".into()
     }
 }
