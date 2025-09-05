@@ -234,6 +234,7 @@ impl<'ctx, P: Property, E: Element> ObjectAsVec<'ctx, P, E> {
         key
     }
 
+    #[inline]
     pub fn extend<I>(&mut self, iter: I)
     where
         I: IntoIterator<Item = (Key<'ctx, P>, Value<'ctx, P, E>)>,

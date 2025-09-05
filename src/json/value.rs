@@ -256,6 +256,14 @@ impl<'ctx, P: Property, E: Element<Property = P>> Value<'ctx, P, E> {
         }
     }
 
+    pub fn into_owned_string(self) -> Option<String> {
+        match self {
+            Value::Str(text) => Some(text.into_owned()),
+            Value::Element(element) => Some(element.to_cow().into_owned()),
+            _ => None,
+        }
+    }
+
     /// If the Value is an integer, represent it as i64 if possible. Returns None otherwise.
     pub fn as_i64(&self) -> Option<i64> {
         match self {

@@ -86,12 +86,27 @@ impl<P: Property> JsonPointer<P> {
     pub fn last(&self) -> Option<&JsonPointerItem<P>> {
         self.0.last()
     }
+
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
 }
 
 impl<P: Property> JsonPointerItem<P> {
     pub fn as_key(&self) -> Option<&Key<'static, P>> {
         match self {
             JsonPointerItem::Key(key) => Some(key),
+            _ => None,
+        }
+    }
+
+    pub fn as_property_key(&self) -> Option<&P> {
+        match self {
+            JsonPointerItem::Key(Key::Property(key)) => Some(key),
             _ => None,
         }
     }
