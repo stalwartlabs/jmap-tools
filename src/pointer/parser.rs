@@ -129,6 +129,24 @@ impl<P: Property> State<P> {
     }
 }
 
+impl<'de, P: Property> serde::Deserialize<'de> for JsonPointer<P> {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        <&str>::deserialize(deserializer).map(|s| JsonPointer::parse(s))
+    }
+}
+
+impl<P: Property> serde::Serialize for JsonPointer<P> {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        serializer.serialize_str(&self.to_string())
+    }
+}
+
 #[cfg(test)]
 mod tests {
 

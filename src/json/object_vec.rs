@@ -43,6 +43,14 @@ impl<'ctx, P: Property, E: Element> FromIterator<(Key<'ctx, P>, Value<'ctx, P, E
 }
 
 impl<'ctx, P: Property, E: Element> ObjectAsVec<'ctx, P, E> {
+    pub fn new() -> Self {
+        Self(Vec::new())
+    }
+
+    pub fn with_capacity(capacity: usize) -> Self {
+        Self(Vec::with_capacity(capacity))
+    }
+
     /// Access to the underlying Vec.
     ///
     /// # Note
@@ -169,6 +177,14 @@ impl<'ctx, P: Property, E: Element> ObjectAsVec<'ctx, P, E> {
         self.0.iter().any(|(k, _)| keys.contains(k))
     }
 
+    pub fn remove(&mut self, key: &Key<'ctx, P>) -> Option<Value<'ctx, P, E>> {
+        if let Some(pos) = self.0.iter().position(|(k, _)| k == key) {
+            Some(self.0.swap_remove(pos).1)
+        } else {
+            None
+        }
+    }
+
     /// Inserts a key-value pair into the object.
     /// If the object did not have this key present, `None` is returned.
     /// If the object did have this key present, the value is updated, and the old value is
@@ -181,16 +197,16 @@ impl<'ctx, P: Property, E: Element> ObjectAsVec<'ctx, P, E> {
     pub fn insert(
         &mut self,
         key: impl Into<Key<'ctx, P>>,
-        value: Value<'ctx, P, E>,
+        value: impl Into<Value<'ctx, P, E>>,
     ) -> Option<Value<'ctx, P, E>> {
         let key = key.into();
         for (k, v) in &mut self.0 {
             if k == &key {
-                return Some(std::mem::replace(v, value));
+                return Some(std::mem::replace(v, value.into()));
             }
         }
         // If the key is not found, push the new key-value pair to the end of the Vec
-        self.0.push((key.into(), value));
+        self.0.push((key.into(), value.into()));
         None
     }
 
@@ -204,22 +220,35 @@ impl<'ctx, P: Property, E: Element> ObjectAsVec<'ctx, P, E> {
     pub fn insert_or_get_mut(
         &mut self,
         key: impl Into<Key<'ctx, P>>,
-        value: Value<'ctx, P, E>,
+        value: impl Into<Value<'ctx, P, E>>,
     ) -> &mut Value<'ctx, P, E> {
         let key = key.into();
         // get position to circumvent lifetime issue
         if let Some(pos) = self.0.iter_mut().position(|(k, _)| *k == key) {
             &mut self.0[pos].1
         } else {
-            self.0.push((key, value));
+            self.0.push((key, value.into()));
             &mut self.0.last_mut().unwrap().1
         }
     }
 
     #[inline]
-    pub fn insert_unchecked(&mut self, key: impl Into<Key<'ctx, P>>, value: Value<'ctx, P, E>) {
-        let key = key.into();
-        self.0.push((key, value));
+    pub fn insert_unchecked(
+        &mut self,
+        key: impl Into<Key<'ctx, P>>,
+        value: impl Into<Value<'ctx, P, E>>,
+    ) {
+        self.0.push((key.into(), value.into()));
+    }
+
+    #[inline]
+    pub fn with_key_value(
+        mut self,
+        key: impl Into<Key<'ctx, P>>,
+        value: impl Into<Value<'ctx, P, E>>,
+    ) -> Self {
+        self.insert_unchecked(key, value);
+        self
     }
 
     pub fn insert_named(&mut self, key: Option<String>, value: Value<'ctx, P, E>) -> String {
@@ -256,10 +285,10 @@ impl<'ctx, P: Property, E: Element> ObjectAsVec<'ctx, P, E> {
     pub fn insert_unchecked_and_get_mut(
         &mut self,
         key: impl Into<Key<'ctx, P>>,
-        value: Value<'ctx, P, E>,
+        value: impl Into<Value<'ctx, P, E>>,
     ) -> &mut Value<'ctx, P, E> {
         let key = key.into();
-        self.0.push((key, value));
+        self.0.push((key, value.into()));
         let idx = self.0.len() - 1;
         &mut self.0[idx].1
     }

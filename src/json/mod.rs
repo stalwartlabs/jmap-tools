@@ -10,5 +10,7 @@ pub(crate) mod index;
 pub(crate) mod key;
 pub(crate) mod num;
 pub(crate) mod object_vec;
+#[cfg(feature = "rkyv")]
+pub(crate) mod rkyv;
 pub(crate) mod ser;
 pub(crate) mod value;

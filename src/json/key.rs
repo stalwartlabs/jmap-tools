@@ -166,6 +166,14 @@ impl<P: Property> Key<'_, P> {
             Key::Property(word) => Key::Property(word),
         }
     }
+
+    pub fn as_string_key(&self) -> Option<&str> {
+        match self {
+            Key::Borrowed(s) => Some(s),
+            Key::Owned(s) => Some(s.as_str()),
+            Key::Property(_) => None,
+        }
+    }
 }
 
 impl<'x, P: Property> From<P> for Key<'x, P> {
