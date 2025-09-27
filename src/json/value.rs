@@ -1,3 +1,5 @@
+use serde::Serialize;
+
 use crate::json::index::Index;
 use crate::json::key::Key;
 use crate::json::num::{N, Number};
@@ -67,6 +69,14 @@ impl<'ctx, P: Property, E: Element<Property = P>> Value<'ctx, P, E> {
         match self {
             Value::Object(obj) => obj.contains_any_key(keys),
             _ => false,
+        }
+    }
+
+    #[inline]
+    pub fn as_object_and_get(&self, key: &Key<'_, P>) -> Option<&Value<'ctx, P, E>> {
+        match self {
+            Value::Object(obj) => obj.get(key),
+            _ => None,
         }
     }
 
@@ -170,6 +180,13 @@ impl<'ctx, P: Property, E: Element<Property = P>> Value<'ctx, P, E> {
     pub fn as_object(&self) -> Option<&ObjectAsVec<'ctx, P, E>> {
         match self {
             Value::Object(obj) => Some(obj),
+            _ => None,
+        }
+    }
+
+    pub fn as_element(&self) -> Option<&E> {
+        match self {
+            Value::Element(element) => Some(element),
             _ => None,
         }
     }
@@ -319,6 +336,21 @@ impl<'a, P: Property, E: Element, T: Into<Value<'a, P, E>>> From<Vec<T>> for Val
     }
 }
 
+impl<'x, P: Property, E: Element, T: Into<Value<'x, P, E>>> From<Option<T>> for Value<'x, P, E> {
+    fn from(val: Option<T>) -> Self {
+        match val {
+            Some(v) => v.into(),
+            None => Value::Null,
+        }
+    }
+}
+
+impl<'x, P: Property, E: Element> From<E> for Value<'x, P, E> {
+    fn from(element: E) -> Self {
+        Value::Element(element)
+    }
+}
+
 impl<'a, P: Property, E: Element, T: Clone + Into<Value<'a, P, E>>> From<&[T]> for Value<'a, P, E> {
     fn from(val: &[T]) -> Self {
         Value::Array(val.iter().map(Clone::clone).map(Into::into).collect())
@@ -371,6 +403,36 @@ impl<P: Property, E: Element> From<i64> for Value<'_, P, E> {
 impl<P: Property, E: Element> From<f64> for Value<'_, P, E> {
     fn from(val: f64) -> Self {
         Value::Number(val.into())
+    }
+}
+
+impl<P: Property, E: Element> From<u32> for Value<'_, P, E> {
+    fn from(val: u32) -> Self {
+        Value::Number(val.into())
+    }
+}
+
+impl<P: Property, E: Element> From<i32> for Value<'_, P, E> {
+    fn from(val: i32) -> Self {
+        Value::Number(val.into())
+    }
+}
+
+impl<P: Property, E: Element> From<usize> for Value<'_, P, E> {
+    fn from(val: usize) -> Self {
+        Value::Number(val.into())
+    }
+}
+
+impl<P: Property, E: Element> From<isize> for Value<'_, P, E> {
+    fn from(val: isize) -> Self {
+        Value::Number(val.into())
+    }
+}
+
+impl<'ctx, P: Property, E: Element> From<ObjectAsVec<'ctx, P, E>> for Value<'ctx, P, E> {
+    fn from(val: ObjectAsVec<'ctx, P, E>) -> Self {
+        Value::Object(val)
     }
 }
 
@@ -430,7 +492,7 @@ impl<'ctx, P: Property, E: Element> From<&'ctx serde_json::Value> for Value<'ctx
             serde_json::Value::Object(obj) => {
                 let mut ans = ObjectAsVec(Vec::with_capacity(obj.len()));
                 for (k, v) in obj {
-                    ans.insert(Key::Borrowed(k.as_str()), v.into());
+                    ans.insert(Key::Borrowed(k.as_str()), v);
                 }
                 Value::Object(ans)
             }
@@ -438,7 +500,7 @@ impl<'ctx, P: Property, E: Element> From<&'ctx serde_json::Value> for Value<'ctx
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize)]
 pub struct Null;
 
 impl Display for Null {
@@ -473,6 +535,28 @@ impl Property for Null {
 
 impl Element for Null {
     type Property = Null;
+
+    fn try_parse<P>(_: &Key<'_, Self::Property>, _: &str) -> Option<Self> {
+        None
+    }
+
+    fn to_cow(&self) -> Cow<'static, str> {
+        "".into()
+    }
+}
+
+impl Property for () {
+    fn try_parse(_: Option<&Key<'_, Self>>, _: &str) -> Option<Self> {
+        None
+    }
+
+    fn to_cow(&self) -> Cow<'static, str> {
+        "".into()
+    }
+}
+
+impl Element for () {
+    type Property = ();
 
     fn try_parse<P>(_: &Key<'_, Self::Property>, _: &str) -> Option<Self> {
         None

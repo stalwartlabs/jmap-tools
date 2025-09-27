@@ -110,6 +110,14 @@ impl<P: Property> JsonPointerItem<P> {
             _ => None,
         }
     }
+
+    pub fn as_string_key(&self) -> Option<&str> {
+        match self {
+            JsonPointerItem::Key(Key::Borrowed(key)) => Some(key),
+            JsonPointerItem::Key(Key::Owned(key)) => Some(key),
+            _ => None,
+        }
+    }
 }
 
 impl<P: Property> Display for JsonPointer<P> {

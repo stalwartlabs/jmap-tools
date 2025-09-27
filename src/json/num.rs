@@ -8,6 +8,7 @@ use core::hash::{Hash, Hasher};
 
 /// Represents a JSON number, whether integer or floating point.
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
+#[repr(transparent)]
 pub struct Number {
     pub(crate) n: N,
 }
@@ -153,6 +154,38 @@ impl From<i64> for Number {
 impl From<f64> for Number {
     fn from(val: f64) -> Self {
         Self { n: N::Float(val) }
+    }
+}
+
+impl From<usize> for Number {
+    fn from(val: usize) -> Self {
+        Self {
+            n: N::PosInt(val as u64),
+        }
+    }
+}
+
+impl From<isize> for Number {
+    fn from(val: isize) -> Self {
+        Self {
+            n: N::NegInt(val as i64),
+        }
+    }
+}
+
+impl From<u32> for Number {
+    fn from(val: u32) -> Self {
+        Self {
+            n: N::PosInt(val as u64),
+        }
+    }
+}
+
+impl From<i32> for Number {
+    fn from(val: i32) -> Self {
+        Self {
+            n: N::NegInt(val as i64),
+        }
     }
 }
 
