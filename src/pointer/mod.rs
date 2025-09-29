@@ -118,6 +118,15 @@ impl<P: Property> JsonPointerItem<P> {
             _ => None,
         }
     }
+
+    pub fn to_cow(&self) -> Option<Cow<'_, str>> {
+        match self {
+            JsonPointerItem::Key(Key::Property(key)) => Some(key.to_cow()),
+            JsonPointerItem::Key(Key::Borrowed(key)) => Some(Cow::Borrowed(key)),
+            JsonPointerItem::Key(Key::Owned(key)) => Some(Cow::Borrowed(key)),
+            _ => None,
+        }
+    }
 }
 
 impl<P: Property> Display for JsonPointer<P> {
