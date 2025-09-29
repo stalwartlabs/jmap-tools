@@ -225,7 +225,10 @@ impl<'de, 'x, P: Property, E: Element<Property = P>> Visitor<'de> for Contextual
     {
         let mut vec = Vec::with_capacity(visitor.size_hint().unwrap_or(0));
 
-        while let Some(elem) = visitor.next_element()? {
+        while let Some(elem) = visitor.next_element_seed(DeserializationContext {
+            parent_key: self.context.parent_key,
+            phantom: std::marker::PhantomData,
+        })? {
             vec.push(elem);
         }
 

@@ -167,6 +167,21 @@ impl<P: Property> Key<'_, P> {
         }
     }
 
+    pub fn to_owned(&self) -> Key<'static, P> {
+        match self {
+            Key::Borrowed(s) => Key::Owned(s.to_string()),
+            Key::Owned(s) => Key::Owned(s.clone()),
+            Key::Property(word) => Key::Property(word.clone()),
+        }
+    }
+
+    pub fn as_property(&self) -> Option<&P> {
+        match self {
+            Key::Property(word) => Some(word),
+            _ => None,
+        }
+    }
+
     pub fn as_string_key(&self) -> Option<&str> {
         match self {
             Key::Borrowed(s) => Some(s),
