@@ -7,14 +7,13 @@
 pub(crate) mod eval;
 pub(crate) mod parser;
 
+use crate::{Element, Key, Property, Value};
 use std::{
     borrow::Cow,
     fmt::{Debug, Display, Formatter},
     iter::Peekable,
     slice::Iter,
 };
-
-use crate::{Element, Key, Property, Value};
 
 pub trait JsonPointerHandler<'x, P: Property, E: Element>: Debug {
     fn eval_jptr<'y>(
@@ -93,6 +92,14 @@ impl<P: Property> JsonPointer<P> {
 
     pub fn is_empty(&self) -> bool {
         self.0.is_empty()
+    }
+
+    pub fn as_slice(&self) -> &[JsonPointerItem<P>] {
+        &self.0
+    }
+
+    pub fn as_mut_slice(&mut self) -> &mut [JsonPointerItem<P>] {
+        &mut self.0
     }
 }
 
