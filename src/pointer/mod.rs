@@ -43,6 +43,10 @@ pub enum JsonPointerItem<P: Property> {
 }
 
 impl<P: Property> JsonPointer<P> {
+    pub fn new(items: Vec<JsonPointerItem<P>>) -> Self {
+        Self(items)
+    }
+
     pub fn iter(&self) -> JsonPointerIter<'_, P> {
         self.0.iter().peekable()
     }
@@ -82,8 +86,16 @@ impl<P: Property> JsonPointer<P> {
         self.0.first()
     }
 
+    pub fn first_mut(&mut self) -> Option<&mut JsonPointerItem<P>> {
+        self.0.first_mut()
+    }
+
     pub fn last(&self) -> Option<&JsonPointerItem<P>> {
         self.0.last()
+    }
+
+    pub fn last_mut(&mut self) -> Option<&mut JsonPointerItem<P>> {
+        self.0.last_mut()
     }
 
     pub fn len(&self) -> usize {
