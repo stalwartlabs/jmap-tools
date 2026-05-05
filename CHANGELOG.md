@@ -1,3 +1,7 @@
+jmap-tools 0.1.5
+================================
+- Fixed parsing ids containing digits in JSON Pointers.
+
 jmap-tools 0.1.4
 ================================
 - Added `new` method to `JsonPointer`.

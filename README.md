@@ -14,12 +14,6 @@ In addition to parsing, the library includes built-in support for [JSON Pointer 
 
 This makes it easy to build servers, clients, or tools that need to manipulate JMAP objects reliably and efficiently.
 
-## Usage
-
-```rust
-...
-```
-
 ## License
 
 Licensed under either of

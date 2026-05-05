@@ -31,7 +31,8 @@ impl<P: Property> JsonPointer<P> {
             start_pos: 0,
             path: Vec::new(),
         };
-        let mut iter = value.as_bytes().iter().enumerate();
+        let value = value.as_bytes();
+        let mut iter = value.iter().enumerate();
 
         while let Some((pos, &ch)) = iter.next() {
             match (ch, &state.token) {
@@ -54,7 +55,7 @@ impl<P: Property> JsonPointer<P> {
                     state.token = TokenType::String;
                 }
                 (b'/', _) => {
-                    state.process();
+                    state.process(&value[state.start_pos..pos]);
                     state.token = TokenType::Unknown;
                     state.start_pos = pos + 1;
                 }
@@ -62,12 +63,9 @@ impl<P: Property> JsonPointer<P> {
                     if matches!(&state.token, TokenType::Number | TokenType::Wildcard)
                         && pos > state.start_pos
                     {
-                        state.buf.extend_from_slice(
-                            value
-                                .as_bytes()
-                                .get(state.start_pos..pos)
-                                .unwrap_or_default(),
-                        );
+                        state
+                            .buf
+                            .extend_from_slice(value.get(state.start_pos..pos).unwrap_or_default());
                     }
 
                     state.token = match ch {
@@ -87,7 +85,7 @@ impl<P: Property> JsonPointer<P> {
             }
         }
 
-        state.process();
+        state.process(value.get(state.start_pos..).unwrap_or_default());
 
         if state.path.is_empty() {
             state.path.push(JsonPointerItem::Root);
@@ -98,7 +96,7 @@ impl<P: Property> JsonPointer<P> {
 }
 
 impl<P: Property> State<P> {
-    pub fn process(&mut self) {
+    pub fn process(&mut self, token_bytes: &[u8]) {
         match self.token {
             TokenType::String => {
                 let item = std::str::from_utf8(&self.buf).unwrap_or_default();
@@ -115,7 +113,15 @@ impl<P: Property> State<P> {
                 self.buf.clear();
             }
             TokenType::Number => {
-                self.path.push(JsonPointerItem::Number(self.num));
+                let item = std::str::from_utf8(token_bytes).unwrap_or_default();
+                match P::try_parse(self.path.last().and_then(|item| item.as_key()), item) {
+                    Some(prop) => {
+                        self.path.push(JsonPointerItem::Key(Key::Property(prop)));
+                    }
+                    None => {
+                        self.path.push(JsonPointerItem::Number(self.num));
+                    }
+                }
                 self.num = 0;
             }
             TokenType::Wildcard => {
