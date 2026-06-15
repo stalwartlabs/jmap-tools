@@ -118,6 +118,10 @@ impl<P: Property> State<P> {
                     Some(prop) => {
                         self.path.push(JsonPointerItem::Key(Key::Property(prop)));
                     }
+                    None if token_bytes.first() == Some(&b'0') && token_bytes.len() > 1 => {
+                        self.path
+                            .push(JsonPointerItem::Key(Key::Owned(item.to_string())));
+                    }
                     None => {
                         self.path.push(JsonPointerItem::Number(self.num));
                     }

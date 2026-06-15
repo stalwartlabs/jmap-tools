@@ -1,3 +1,7 @@
+jmap-tools 0.1.6
+================================
+- Parse integers starting with '0' as strings in JSON Pointers.
+
 jmap-tools 0.1.5
 ================================
 - Fixed parsing ids containing digits in JSON Pointers.
