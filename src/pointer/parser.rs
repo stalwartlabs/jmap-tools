@@ -118,6 +118,10 @@ impl<P: Property> State<P> {
                     Some(prop) => {
                         self.path.push(JsonPointerItem::Key(Key::Property(prop)));
                     }
+                    None if token_bytes.first() == Some(&b'0') && token_bytes.len() > 1 => {
+                        self.path
+                            .push(JsonPointerItem::Key(Key::Owned(item.to_string())));
+                    }
                     None => {
                         self.path.push(JsonPointerItem::Number(self.num));
                     }
@@ -215,6 +219,13 @@ mod tests {
                     JsonPointerItem::Number(1234),
                 ],
             ),
+            (
+                "/hello/01",
+                vec![
+                    JsonPointerItem::Key("hello".into()),
+                    JsonPointerItem::Key("01".into()),
+                ],
+            ),
             ("~0~1", vec![JsonPointerItem::Key("~/".into())]),
             (
                 "/hello/~0~1",
@@ -281,6 +292,45 @@ mod tests {
             vec![
                 JsonPointerItem::Key(Key::Owned("other".to_string())),
                 JsonPointerItem::Number(2),
+            ]
+        );
+    }
+
+    #[test]
+    fn json_pointer_parse_leading_zero_is_string() {
+        let pointer = JsonPointer::<TestProp>::parse("other/07");
+        assert_eq!(
+            pointer.0,
+            vec![
+                JsonPointerItem::Key(Key::Owned("other".to_string())),
+                JsonPointerItem::Key(Key::Owned("07".to_string())),
+            ]
+        );
+
+        let pointer = JsonPointer::<TestProp>::parse("other/00");
+        assert_eq!(
+            pointer.0,
+            vec![
+                JsonPointerItem::Key(Key::Owned("other".to_string())),
+                JsonPointerItem::Key(Key::Owned("00".to_string())),
+            ]
+        );
+
+        let pointer = JsonPointer::<TestProp>::parse("other/0");
+        assert_eq!(
+            pointer.0,
+            vec![
+                JsonPointerItem::Key(Key::Owned("other".to_string())),
+                JsonPointerItem::Number(0),
+            ]
+        );
+
+        let pointer = JsonPointer::<TestProp>::parse("other/70");
+        assert_eq!(
+            pointer.0,
+            vec![
+                JsonPointerItem::Key(Key::Owned("other".to_string())),
+                JsonPointerItem::Number(70),
             ]
         );
     }
