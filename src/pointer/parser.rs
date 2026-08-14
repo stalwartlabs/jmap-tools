@@ -5,6 +5,7 @@
  */
 
 use crate::{JsonPointer, JsonPointerItem, Key, Property};
+use std::borrow::Cow;
 
 enum TokenType {
     Unknown,
@@ -144,7 +145,7 @@ impl<'de, P: Property> serde::Deserialize<'de> for JsonPointer<P> {
     where
         D: serde::Deserializer<'de>,
     {
-        <&str>::deserialize(deserializer).map(|s| JsonPointer::parse(s))
+        <Cow<'de, str>>::deserialize(deserializer).map(|s| JsonPointer::parse(s.as_ref()))
     }
 }
 
@@ -333,5 +334,14 @@ mod tests {
                 JsonPointerItem::Number(70),
             ]
         );
+    }
+
+    #[test]
+    fn deserializes_pointers_with_escaped_solidus() {
+        let plain: JsonPointer<Null> = serde_json::from_str(r#""/list/*/id""#).expect("plain");
+        let escaped: JsonPointer<Null> =
+            serde_json::from_str(r#""\/list\/*\/id""#).expect("escaped solidus must deserialize");
+
+        assert_eq!(plain, escaped);
     }
 }
