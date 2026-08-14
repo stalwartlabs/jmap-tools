@@ -1,3 +1,7 @@
+jmap-tools 0.1.7
+================================
+- Fix: Solidus in JSON Pointers break parsing.
+
 jmap-tools 0.1.6
 ================================
 - Parse integers starting with '0' as strings in JSON Pointers.

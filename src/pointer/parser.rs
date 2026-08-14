@@ -5,6 +5,7 @@
  */
 
 use crate::{JsonPointer, JsonPointerItem, Key, Property};
+use std::borrow::Cow;
 
 enum TokenType {
     Unknown,
@@ -144,7 +145,7 @@ impl<'de, P: Property> serde::Deserialize<'de> for JsonPointer<P> {
     where
         D: serde::Deserializer<'de>,
     {
-        <&str>::deserialize(deserializer).map(|s| JsonPointer::parse(s))
+        <Cow<'de, str>>::deserialize(deserializer).map(|s| JsonPointer::parse(s.as_ref()))
     }
 }
 
