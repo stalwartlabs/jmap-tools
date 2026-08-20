@@ -1,3 +1,7 @@
+jmap-tools 0.1.8
+================================
+- Use `rkyv::primitive::ArchivedU32` and `ArchivedU64` instead of the concrete `rkyv::rend::u32_le` and `rkyv::rend::u64_le`.
+
 jmap-tools 0.1.7
 ================================
 - Fix: Solidus in JSON Pointers break parsing.

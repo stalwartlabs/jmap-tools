@@ -7,7 +7,7 @@
 use crate::{Element, Property, Value};
 use rkyv::{
     option::ArchivedOption,
-    rend::{u32_le, u64_le},
+    primitive::{ArchivedU32, ArchivedU64},
     string::ArchivedString,
 };
 
@@ -29,14 +29,14 @@ impl<'ctx, P: Property, E: Element> From<&ArchivedString> for Value<'ctx, P, E> 
     }
 }
 
-impl<'ctx, P: Property, E: Element> From<&u32_le> for Value<'ctx, P, E> {
-    fn from(value: &u32_le) -> Self {
+impl<'ctx, P: Property, E: Element> From<&ArchivedU32> for Value<'ctx, P, E> {
+    fn from(value: &ArchivedU32) -> Self {
         Value::Number(u32::from(value).into())
     }
 }
 
-impl<'ctx, P: Property, E: Element> From<&u64_le> for Value<'ctx, P, E> {
-    fn from(value: &u64_le) -> Self {
+impl<'ctx, P: Property, E: Element> From<&ArchivedU64> for Value<'ctx, P, E> {
+    fn from(value: &ArchivedU64) -> Self {
         Value::Number(u64::from(value).into())
     }
 }
