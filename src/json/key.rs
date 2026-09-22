@@ -8,9 +8,11 @@ use crate::json::value::Property;
 use serde::de::{self, DeserializeSeed, Visitor};
 use serde::{Serialize, Serializer};
 use std::borrow::Cow;
+use std::cmp::Ordering;
 use std::fmt;
+use std::hash::{Hash, Hasher};
 
-#[derive(Debug, Clone, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone)]
 pub enum Key<'x, P: Property> {
     Property(P),
     Borrowed(&'x str),
@@ -86,7 +88,7 @@ impl<P: Property> Serialize for Key<'_, P> {
 impl<P: Property> PartialEq for Key<'_, P> {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
-            (Key::Property(k1), Key::Property(k2)) => k1 == k2,
+            (Key::Property(k1), Key::Property(k2)) => k1.to_cow() == k2.to_cow(),
             (Key::Property(k1), Key::Borrowed(k2)) => k1.to_cow() == *k2,
             (Key::Property(k1), Key::Owned(k2)) => k1.to_cow() == k2.as_str(),
             (Key::Owned(k1), Key::Owned(k2)) => k1 == k2,
@@ -100,6 +102,28 @@ impl<P: Property> PartialEq for Key<'_, P> {
 }
 
 impl<P: Property> Eq for Key<'_, P> {}
+
+impl<P: Property> Hash for Key<'_, P> {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        match self {
+            Key::Property(word) => word.to_cow().hash(state),
+            Key::Borrowed(s) => s.hash(state),
+            Key::Owned(s) => s.hash(state),
+        }
+    }
+}
+
+impl<P: Property> PartialOrd for Key<'_, P> {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl<P: Property> Ord for Key<'_, P> {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.to_string().cmp(&other.to_string())
+    }
+}
 
 impl<P: Property> PartialEq<&str> for Key<'_, P> {
     fn eq(&self, other: &&str) -> bool {
@@ -194,5 +218,109 @@ impl<P: Property> Key<'_, P> {
 impl<'x, P: Property> From<P> for Key<'x, P> {
     fn from(word: P) -> Self {
         Key::Property(word)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Key;
+    use crate::Property;
+    use std::borrow::Cow;
+    use std::cmp::Ordering;
+    use std::collections::HashSet;
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
+
+    #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+    enum TestProp {
+        Title,
+        Id(String),
+    }
+
+    impl Property for TestProp {
+        fn try_parse(_: Option<&Key<'_, Self>>, value: &str) -> Option<Self> {
+            (value == "title").then_some(TestProp::Title)
+        }
+
+        fn to_cow(&self) -> Cow<'static, str> {
+            match self {
+                TestProp::Title => Cow::Borrowed("title"),
+                TestProp::Id(id) => Cow::Owned(id.clone()),
+            }
+        }
+    }
+
+    fn hash(key: &Key<'_, TestProp>) -> u64 {
+        let mut hasher = DefaultHasher::new();
+        key.hash(&mut hasher);
+        hasher.finish()
+    }
+
+    #[test]
+    fn hash_and_ordering_are_consistent_with_eq() {
+        let keys = [
+            Key::Property(TestProp::Title),
+            Key::Property(TestProp::Id("title".to_string())),
+            Key::Borrowed("title"),
+            Key::Owned("title".to_string()),
+            Key::Property(TestProp::Id("id-1".to_string())),
+            Key::Borrowed("id-1"),
+            Key::Property(TestProp::Id("id-2".to_string())),
+            Key::Owned("abc".to_string()),
+            Key::Borrowed("zzz"),
+        ];
+
+        for a in &keys {
+            for b in &keys {
+                assert_eq!(a == b, a.cmp(b) == Ordering::Equal, "{a:?} {b:?}");
+                assert_eq!(a.partial_cmp(b), Some(a.cmp(b)), "{a:?} {b:?}");
+                assert_eq!(a.cmp(b), b.cmp(a).reverse(), "{a:?} {b:?}");
+                if a == b {
+                    assert_eq!(hash(a), hash(b), "{a:?} {b:?}");
+                }
+
+                for c in &keys {
+                    if a == b && b == c {
+                        assert!(a == c, "{a:?} {b:?} {c:?}");
+                    }
+                    if a.cmp(b) == Ordering::Less && b.cmp(c) == Ordering::Less {
+                        assert_eq!(a.cmp(c), Ordering::Less, "{a:?} {b:?} {c:?}");
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn keys_are_ordered_by_name() {
+        assert!(Key::<TestProp>::Owned("abc".to_string()) < Key::Property(TestProp::Title));
+        assert!(Key::Property(TestProp::Title) < Key::<TestProp>::Borrowed("zzz"));
+        assert!(
+            Key::Property(TestProp::Id("a".to_string()))
+                < Key::Property(TestProp::Id("b".to_string()))
+        );
+
+        let mut sorted = vec![
+            Key::<TestProp>::Borrowed("zzz"),
+            Key::Property(TestProp::Title),
+            Key::Owned("abc".to_string()),
+        ];
+        sorted.sort();
+        assert_eq!(
+            sorted,
+            vec![
+                Key::Owned("abc".to_string()),
+                Key::Property(TestProp::Title),
+                Key::Borrowed("zzz"),
+            ]
+        );
+    }
+
+    #[test]
+    fn hash_set_finds_equal_keys_of_any_variant() {
+        let set = HashSet::from([Key::Property(TestProp::Title)]);
+        assert!(set.contains(&Key::Borrowed("title")));
+        assert!(set.contains(&Key::Owned("title".to_string())));
+        assert!(!set.contains(&Key::Borrowed("other")));
     }
 }

@@ -38,6 +38,7 @@ pub type JsonPointerIter<'x, P> = Peekable<Iter<'x, JsonPointerItem<P>>>;
 pub enum JsonPointerItem<P: Property> {
     Root,
     Wildcard,
+    Invalid(String),
     Key(Key<'static, P>),
     Number(u64),
 }
@@ -158,6 +159,7 @@ impl<P: Property> Display for JsonPointer<P> {
             match ptr {
                 JsonPointerItem::Root => {}
                 JsonPointerItem::Wildcard => write!(f, "*")?,
+                JsonPointerItem::Invalid(text) => write!(f, "{text}")?,
                 JsonPointerItem::Key(k) => {
                     for c in k.to_string().chars() {
                         match c {

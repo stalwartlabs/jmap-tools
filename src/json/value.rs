@@ -441,7 +441,7 @@ impl<P: Property, E: Element> From<Value<'_, P, E>> for serde_json::Value {
         match val {
             Value::Null => serde_json::Value::Null,
             Value::Bool(val) => serde_json::Value::Bool(val),
-            Value::Number(val) => serde_json::Value::Number(val.into()),
+            Value::Number(val) => val.into_json_value(),
             Value::Str(val) => serde_json::Value::String(val.to_string()),
             Value::Array(vals) => {
                 serde_json::Value::Array(vals.into_iter().map(|val| val.into()).collect())
@@ -457,7 +457,7 @@ impl<P: Property, E: Element> From<&Value<'_, P, E>> for serde_json::Value {
         match val {
             Value::Null => serde_json::Value::Null,
             Value::Bool(val) => serde_json::Value::Bool(*val),
-            Value::Number(val) => serde_json::Value::Number((*val).into()),
+            Value::Number(val) => val.into_json_value(),
             Value::Str(val) => serde_json::Value::String(val.to_string()),
             Value::Array(vals) => {
                 serde_json::Value::Array(vals.iter().map(|val| val.into()).collect())

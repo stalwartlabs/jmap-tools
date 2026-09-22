@@ -7,7 +7,7 @@
 use super::{JsonPointerHandler, JsonPointerItem};
 use crate::json::key::Key;
 use crate::pointer::JsonPointerIter;
-use crate::{Element, Property, Value};
+use crate::{Element, ObjectAsVec, Property, Value};
 use std::borrow::Cow;
 use std::collections::HashMap;
 use std::hash::BuildHasher;
@@ -28,13 +28,14 @@ impl<'x, P: Property, E: Element> JsonPointerHandler<'x, P, E> for Value<'x, P, 
             }
             Some(JsonPointerItem::Number(n)) => match self {
                 Value::Array(values) => {
-                    if let Some(v) = values.get(*n as usize) {
+                    if let Some(v) = usize::try_from(*n).ok().and_then(|index| values.get(index)) {
                         v.eval_jptr(pointer, results);
                     }
                 }
                 Value::Object(map) => {
-                    let n = Key::Owned(n.to_string());
-                    if let Some(v) = map.get(&n) {
+                    let mut buf = NumberKey::default();
+                    let n = buf.format(*n);
+                    if let Some((_, v)) = map.0.iter().find(|(k, _)| key_matches(k, n)) {
                         v.eval_jptr(pointer, results);
                     }
                 }
@@ -53,6 +54,7 @@ impl<'x, P: Property, E: Element> JsonPointerHandler<'x, P, E> for Value<'x, P, 
                 }
                 _ => {}
             },
+            Some(JsonPointerItem::Invalid(_)) => {}
             Some(JsonPointerItem::Root) | None => {
                 results.push(Cow::Borrowed(self));
             }
@@ -67,44 +69,41 @@ impl<'x, P: Property, E: Element> JsonPointerHandler<'x, P, E> for Value<'x, P, 
         match pointer.next() {
             Some(JsonPointerItem::Key(key)) => {
                 if let Value::Object(map) = self {
-                    if let Some(pos) = map.0.iter().position(|(k, _)| k == key) {
-                        return if pointer.peek().is_some() {
-                            map.0[pos].1.patch_jptr(pointer, value)
-                        } else {
-                            map.0[pos].1 = value;
-                            true
-                        };
-                    } else if pointer.next().is_none() {
-                        map.insert_unchecked(key.clone(), value);
-                        return true;
-                    }
+                    return map.patch_entry(|k| k == key, || key.clone(), pointer, value);
                 }
             }
             Some(JsonPointerItem::Number(n)) => match self {
                 Value::Array(values) => {
-                    if let Some(item) = values.get_mut(*n as usize) {
-                        return if pointer.peek().is_some() {
-                            item.patch_jptr(pointer, value)
-                        } else {
-                            *item = value;
-                            true
+                    if let Some(item) = usize::try_from(*n)
+                        .ok()
+                        .and_then(|index| values.get_mut(index))
+                    {
+                        return match (pointer.peek().is_some(), value) {
+                            (true, value) => item.patch_jptr(pointer, value),
+                            (false, Value::Null) => false,
+                            (false, value) => {
+                                *item = value;
+                                true
+                            }
                         };
                     }
                 }
                 Value::Object(map) => {
-                    let n = Key::Owned(n.to_string());
-                    if let Some(item) = map.get_mut(&n) {
-                        return if pointer.peek().is_some() {
-                            item.patch_jptr(pointer, value)
-                        } else {
-                            *item = value;
-                            true
-                        };
-                    }
+                    let mut buf = NumberKey::default();
+                    let digits = buf.format(*n);
+                    return map.patch_entry(
+                        |k| key_matches(k, digits),
+                        || Key::Owned(digits.to_string()),
+                        pointer,
+                        value,
+                    );
                 }
                 _ => {}
             },
-            Some(JsonPointerItem::Wildcard) | Some(JsonPointerItem::Root) | None => (),
+            Some(
+                JsonPointerItem::Wildcard | JsonPointerItem::Root | JsonPointerItem::Invalid(_),
+            )
+            | None => (),
         }
 
         false
@@ -112,6 +111,72 @@ impl<'x, P: Property, E: Element> JsonPointerHandler<'x, P, E> for Value<'x, P, 
 
     fn to_value<'y>(&'y self) -> Cow<'y, Value<'x, P, E>> {
         Cow::Borrowed(self)
+    }
+}
+
+impl<'x, P: Property, E: Element> ObjectAsVec<'x, P, E> {
+    fn patch_entry<'y: 'x>(
+        &mut self,
+        matches: impl Fn(&Key<'x, P>) -> bool,
+        new_key: impl FnOnce() -> Key<'static, P>,
+        mut pointer: JsonPointerIter<'_, P>,
+        value: Value<'y, P, E>,
+    ) -> bool {
+        let Some(pos) = self.0.iter().position(|(k, _)| matches(k)) else {
+            return match (pointer.peek().is_none(), value) {
+                (false, _) => false,
+                (true, Value::Null) => true,
+                (true, value) => {
+                    self.insert_unchecked(new_key(), value);
+                    true
+                }
+            };
+        };
+
+        if pointer.peek().is_some() {
+            self.0
+                .get_mut(pos)
+                .is_some_and(|(_, item)| item.patch_jptr(pointer, value))
+        } else if matches!(value, Value::Null) {
+            self.0.remove(pos);
+            true
+        } else if let Some((_, item)) = self.0.get_mut(pos) {
+            *item = value;
+            true
+        } else {
+            false
+        }
+    }
+}
+
+fn key_matches<P: Property>(key: &Key<'_, P>, digits: &str) -> bool {
+    match key {
+        Key::Borrowed(key) => *key == digits,
+        Key::Owned(key) => key == digits,
+        Key::Property(property) => property.to_cow() == digits,
+    }
+}
+
+#[derive(Default)]
+struct NumberKey([u8; 20]);
+
+impl NumberKey {
+    fn format(&mut self, mut n: u64) -> &str {
+        let mut pos = self.0.len();
+        loop {
+            pos -= 1;
+            if let Some(digit) = self.0.get_mut(pos) {
+                *digit = b'0' + (n % 10) as u8;
+            }
+            n /= 10;
+            if n == 0 || pos == 0 {
+                break;
+            }
+        }
+        self.0
+            .get(pos..)
+            .and_then(|digits| std::str::from_utf8(digits).ok())
+            .unwrap_or_default()
     }
 }
 
@@ -126,7 +191,7 @@ where
     ) {
         match pointer.next() {
             Some(JsonPointerItem::Number(n)) => {
-                if let Some(v) = self.get(*n as usize) {
+                if let Some(v) = usize::try_from(*n).ok().and_then(|index| self.get(index)) {
                     v.eval_jptr(pointer, results);
                 }
             }
@@ -148,11 +213,15 @@ where
         value: Value<'y, P, E>,
     ) -> bool {
         if let Some(JsonPointerItem::Number(n)) = pointer.next()
-            && let Some(item) = self.get_mut(*n as usize)
+            && let Some(item) = usize::try_from(*n)
+                .ok()
+                .and_then(|index| self.get_mut(index))
         {
             if pointer.peek().is_some() {
                 return item.patch_jptr(pointer, value);
-            } else if let Ok(value) = T::try_from(value) {
+            } else if !matches!(value, Value::Null)
+                && let Ok(value) = T::try_from(value)
+            {
                 *item = value;
                 return true;
             }
@@ -202,8 +271,8 @@ where
                 }
             }
             Some(JsonPointerItem::Number(n)) => {
-                let n = n.to_string();
-                if let Some(v) = self.get(&n) {
+                let mut buf = NumberKey::default();
+                if let Some(v) = self.get(buf.format(*n)) {
                     v.eval_jptr(pointer, results);
                 }
             }
@@ -212,6 +281,7 @@ where
                     v.eval_jptr(pointer.clone(), results);
                 }
             }
+            Some(JsonPointerItem::Invalid(_)) => {}
             Some(JsonPointerItem::Root) | None => {
                 results.push(self.to_value());
             }
@@ -223,32 +293,32 @@ where
         mut pointer: JsonPointerIter<'_, P>,
         value: Value<'y, P, E>,
     ) -> bool {
-        match pointer.next() {
-            Some(JsonPointerItem::Key(key)) => {
-                let key = key.to_string();
-                if let Some(item) = self.get_mut(key.as_ref()) {
-                    if pointer.peek().is_some() {
-                        return item.patch_jptr(pointer, value);
-                    } else if let Ok(value) = T::try_from(value) {
-                        *item = value;
-                        return true;
-                    }
-                } else if pointer.next().is_none()
-                    && let Ok(v) = T::try_from(value)
-                {
-                    self.insert(key.into_owned(), v);
-                    return true;
-                }
-            }
-            Some(JsonPointerItem::Number(n)) => {
-                if let Some(v) = self.get_mut(&n.to_string()) {
-                    return v.patch_jptr(pointer, value);
-                }
-            }
-            Some(JsonPointerItem::Wildcard) | Some(JsonPointerItem::Root) | None => (),
-        }
+        let mut buf = NumberKey::default();
+        let key = match pointer.next() {
+            Some(JsonPointerItem::Key(key)) => key.to_string(),
+            Some(JsonPointerItem::Number(n)) => Cow::Borrowed(buf.format(*n)),
+            Some(
+                JsonPointerItem::Wildcard | JsonPointerItem::Root | JsonPointerItem::Invalid(_),
+            )
+            | None => return false,
+        };
 
-        false
+        if pointer.peek().is_some() {
+            self.get_mut(key.as_ref())
+                .is_some_and(|item| item.patch_jptr(pointer, value))
+        } else if matches!(value, Value::Null) {
+            self.remove(key.as_ref());
+            true
+        } else if let Ok(value) = T::try_from(value) {
+            if let Some(item) = self.get_mut(key.as_ref()) {
+                *item = value;
+            } else {
+                self.insert(key.into_owned(), value);
+            }
+            true
+        } else {
+            false
+        }
     }
 
     fn to_value<'y>(&'y self) -> Cow<'y, Value<'x, P, E>> {
@@ -441,6 +511,464 @@ mod tests {
                     pointer, test, expected, results
                 );
             }
+        }
+    }
+
+    fn apply_patch<'a>(document: &'a str, pointer: &str, patch: &'a str) -> (bool, String) {
+        let mut value =
+            serde_json::from_str::<Value<'a, Null, Null>>(document).expect("valid document");
+        let patch = serde_json::from_str::<Value<'a, Null, Null>>(patch).expect("valid patch");
+        let applied = value.patch_jptr(JsonPointer::parse(pointer).iter(), patch);
+        (
+            applied,
+            serde_json::to_string(&value).expect("serializable value"),
+        )
+    }
+
+    #[test]
+    fn patch_null_removes_top_level_key() {
+        assert_eq!(
+            apply_patch(r#"{"a":1,"b":2,"c":3}"#, "b", "null"),
+            (true, r#"{"a":1,"c":3}"#.to_string())
+        );
+    }
+
+    #[test]
+    fn patch_null_on_missing_key_is_noop() {
+        assert_eq!(
+            apply_patch(r#"{"a":1}"#, "b", "null"),
+            (true, r#"{"a":1}"#.to_string())
+        );
+        assert_eq!(
+            apply_patch(r#"{"a":{"x":1}}"#, "a/y", "null"),
+            (true, r#"{"a":{"x":1}}"#.to_string())
+        );
+    }
+
+    #[test]
+    fn patch_null_removes_nested_key() {
+        assert_eq!(
+            apply_patch(
+                r#"{"overrides":{"r1":{"title":"x"},"r2":{"title":"y"},"r3":{}}}"#,
+                "overrides/r2",
+                "null"
+            ),
+            (
+                true,
+                r#"{"overrides":{"r1":{"title":"x"},"r3":{}}}"#.to_string()
+            )
+        );
+        assert_eq!(
+            apply_patch(r#"{"a":{"b":{"c":1,"d":2,"e":3}}}"#, "a/b/d", "null"),
+            (true, r#"{"a":{"b":{"c":1,"e":3}}}"#.to_string())
+        );
+    }
+
+    #[test]
+    fn patch_null_through_missing_parent_fails() {
+        assert_eq!(
+            apply_patch(r#"{"a":1}"#, "b/c", "null"),
+            (false, r#"{"a":1}"#.to_string())
+        );
+    }
+
+    #[test]
+    fn patch_null_removes_numeric_object_key() {
+        assert_eq!(
+            apply_patch(r#"{"m":{"1":"a","2":"b","3":"c"}}"#, "m/2", "null"),
+            (true, r#"{"m":{"1":"a","3":"c"}}"#.to_string())
+        );
+        assert_eq!(
+            apply_patch(r#"{"m":{"1":"a"}}"#, "m/2", "null"),
+            (true, r#"{"m":{"1":"a"}}"#.to_string())
+        );
+    }
+
+    #[test]
+    fn patch_inside_array() {
+        assert_eq!(
+            apply_patch(r#"{"l":[1,2,3]}"#, "l/1", "5"),
+            (true, r#"{"l":[1,5,3]}"#.to_string())
+        );
+        assert_eq!(
+            apply_patch(r#"{"l":[1,2,3]}"#, "l/1", "null"),
+            (false, r#"{"l":[1,2,3]}"#.to_string())
+        );
+        assert_eq!(
+            apply_patch(
+                r#"{"name":{"components":[{"value":"Sarah"},{"value":"Connor"}]}}"#,
+                "name/components/0",
+                "null"
+            ),
+            (
+                false,
+                r#"{"name":{"components":[{"value":"Sarah"},{"value":"Connor"}]}}"#.to_string()
+            )
+        );
+        assert_eq!(
+            apply_patch(r#"{"l":[1]}"#, "l/4294967296", "2"),
+            (false, r#"{"l":[1]}"#.to_string())
+        );
+        assert_eq!(
+            apply_patch(r#"{"l":[{"a":1}]}"#, "l/0/a", "2"),
+            (true, r#"{"l":[{"a":2}]}"#.to_string())
+        );
+        assert_eq!(
+            apply_patch(
+                r#"{"name":{"components":[{"kind":"given","value":"Sarah"},{"kind":"surname","value":"Connor"}]}}"#,
+                "name/components/1/value",
+                r#""O'Connor""#
+            ),
+            (
+                true,
+                r#"{"name":{"components":[{"kind":"given","value":"Sarah"},{"kind":"surname","value":"O'Connor"}]}}"#
+                    .to_string()
+            )
+        );
+        assert_eq!(
+            apply_patch(
+                r#"{"name":{"components":[{"value":"Sarah"}]}}"#,
+                "name/components/0/value",
+                "null"
+            ),
+            (true, r#"{"name":{"components":[{}]}}"#.to_string())
+        );
+        assert_eq!(
+            apply_patch(r#"{"l":[1]}"#, "l/5", "null"),
+            (false, r#"{"l":[1]}"#.to_string())
+        );
+        assert_eq!(
+            apply_patch(r#"{"l":[1]}"#, "l/1", "2"),
+            (false, r#"{"l":[1]}"#.to_string())
+        );
+        assert_eq!(
+            apply_patch(r#"{"l":[{"a":1}]}"#, "l/3/a", "2"),
+            (false, r#"{"l":[{"a":1}]}"#.to_string())
+        );
+    }
+
+    #[test]
+    fn patch_non_null_values_unchanged() {
+        assert_eq!(
+            apply_patch(r#"{"a":1,"b":2}"#, "a", "5"),
+            (true, r#"{"a":5,"b":2}"#.to_string())
+        );
+        assert_eq!(
+            apply_patch(r#"{"a":1}"#, "b", r#""x""#),
+            (true, r#"{"a":1,"b":"x"}"#.to_string())
+        );
+        assert_eq!(
+            apply_patch(r#"{"m":{"1":"a"}}"#, "m/1", r#""z""#),
+            (true, r#"{"m":{"1":"z"}}"#.to_string())
+        );
+        assert_eq!(
+            apply_patch(r#"{"m":{"1":"a"}}"#, "m/2", r#""z""#),
+            (true, r#"{"m":{"1":"a","2":"z"}}"#.to_string())
+        );
+        assert_eq!(
+            apply_patch(r#"{"m":{"1":"a"}}"#, "m/12/x", r#""z""#),
+            (false, r#"{"m":{"1":"a"}}"#.to_string())
+        );
+        assert_eq!(
+            apply_patch(r#"{"m":{"12":{"x":1}}}"#, "m/12/x", r#""z""#),
+            (true, r#"{"m":{"12":{"x":"z"}}}"#.to_string())
+        );
+        assert_eq!(
+            apply_patch(r#"{"a":{}}"#, "a/b", "false"),
+            (true, r#"{"a":{"b":false}}"#.to_string())
+        );
+    }
+
+    #[test]
+    fn patch_null_escaped_slash_key() {
+        let override_patch = r#"{"o":{"R":{"participants/abc":null,"title":"t"}}}"#;
+        assert_eq!(
+            apply_patch(override_patch, "o/R/participants~1abc", "null"),
+            (true, r#"{"o":{"R":{"title":"t"}}}"#.to_string())
+        );
+        assert_eq!(
+            apply_patch(r#"{"o":{"R":{}}}"#, "o/R/participants~1abc", "null"),
+            (true, r#"{"o":{"R":{}}}"#.to_string())
+        );
+        assert_eq!(
+            apply_patch(override_patch, "o/R/participants/abc", "null"),
+            (false, override_patch.to_string())
+        );
+        assert_eq!(
+            apply_patch(
+                r#"{"o":{"R":{"participants":{"abc":{},"def":{}}}}}"#,
+                "o/R/participants/abc",
+                "null"
+            ),
+            (
+                true,
+                r#"{"o":{"R":{"participants":{"def":{}}}}}"#.to_string()
+            )
+        );
+    }
+
+    #[test]
+    fn patch_null_removes_hashmap_entry() {
+        let mut map = HashMap::<String, SubObject>::new();
+        map.insert(
+            "k".to_string(),
+            SubObject {
+                text: "t".to_string(),
+                number: 1,
+                boolean: true,
+            },
+        );
+        assert!(map.patch_jptr(JsonPointer::parse("k").iter(), Value::Null));
+        assert!(map.is_empty());
+        assert!(map.patch_jptr(JsonPointer::parse("missing").iter(), Value::Null));
+        assert!(map.is_empty());
+    }
+
+    #[test]
+    fn patch_null_removes_nested_hashmap_entry() {
+        let sub = SubObject {
+            text: "t".to_string(),
+            number: 1,
+            boolean: true,
+        };
+        let mut obj = Object {
+            map: HashMap::from([
+                ("a".to_string(), sub.clone()),
+                ("7".to_string(), sub.clone()),
+            ]),
+            array: vec![sub.clone()],
+            value: sub,
+        };
+        assert!(obj.patch_jptr(JsonPointer::parse("map/a").iter(), Value::Null));
+        assert!(obj.patch_jptr(JsonPointer::parse("map/7").iter(), Value::Null));
+        assert!(obj.map.is_empty());
+        assert!(
+            obj.patch_jptr(
+                JsonPointer::parse("map/9").iter(),
+                serde_json::from_str::<Value<'_, Null, Null>>(
+                    r#"{"text":"n","number":9,"boolean":false}"#
+                )
+                .expect("valid patch")
+            )
+        );
+        assert_eq!(obj.map.get("9").map(|sub| sub.number), Some(9));
+        assert!(!obj.patch_jptr(JsonPointer::parse("map/missing/text").iter(), Value::Null));
+        assert!(!obj.patch_jptr(JsonPointer::parse("array/0").iter(), Value::Null));
+        assert!(!obj.patch_jptr(
+            JsonPointer::parse("array/4/text").iter(),
+            Value::Str("x".into())
+        ));
+        assert!(obj.patch_jptr(
+            JsonPointer::parse("array/0/text").iter(),
+            Value::Str("x".into())
+        ));
+        assert_eq!(obj.array.len(), 1);
+        assert_eq!(obj.array.first().map(|sub| sub.text.as_str()), Some("x"));
+    }
+
+    #[test]
+    fn patch_escaped_recurrence_override_pointer() {
+        let event = r#"{"recurrenceOverrides":{"2025-03-05T09:00:00":{"start":"2025-03-05T10:00:00","participants/dG9tQGZvb2Jhci5xlLmNvbQ/participationStatus":"declined"}}}"#;
+        assert_eq!(
+            apply_patch(
+                event,
+                "recurrenceOverrides/2025-03-05T09:00:00/participants~1dG9tQGZvb2Jhci5xlLmNvbQ~1participationStatus",
+                "null"
+            ),
+            (
+                true,
+                r#"{"recurrenceOverrides":{"2025-03-05T09:00:00":{"start":"2025-03-05T10:00:00"}}}"#
+                    .to_string()
+            )
+        );
+        assert_eq!(
+            apply_patch(
+                event,
+                "recurrenceOverrides/2025-03-05T09:00:00/participants~1em9lQGZvb2GFtcGxlLmNvbQ~1participationStatus",
+                r#""declined""#
+            ),
+            (
+                true,
+                r#"{"recurrenceOverrides":{"2025-03-05T09:00:00":{"start":"2025-03-05T10:00:00","participants/dG9tQGZvb2Jhci5xlLmNvbQ/participationStatus":"declined","participants/em9lQGZvb2GFtcGxlLmNvbQ/participationStatus":"declined"}}}"#
+                    .to_string()
+            )
+        );
+    }
+
+    #[test]
+    fn patch_numeric_token_after_digit_leading_key() {
+        assert_eq!(
+            apply_patch(
+                r#"{"locations":{"9x":{"links":{}}}}"#,
+                "locations/9x/links/5",
+                r#"{"href":"a"}"#
+            ),
+            (
+                true,
+                r#"{"locations":{"9x":{"links":{"5":{"href":"a"}}}}}"#.to_string()
+            )
+        );
+        assert_eq!(
+            apply_patch(
+                r#"{"a":{"1k":{"c":[0,1,2,3,4,5,6,7,8,9,10,11]}}}"#,
+                "a/1k/c/0",
+                "99"
+            ),
+            (
+                true,
+                r#"{"a":{"1k":{"c":[99,1,2,3,4,5,6,7,8,9,10,11]}}}"#.to_string()
+            )
+        );
+        assert_eq!(
+            apply_patch(
+                r#"{"addresses":{"3f2504e0-4f89-11d3":{"components":[{"value":"Main Street"}]}}}"#,
+                "addresses/3f2504e0-4f89-11d3/components/0/value",
+                r#""High Street""#
+            ),
+            (
+                true,
+                r#"{"addresses":{"3f2504e0-4f89-11d3":{"components":[{"value":"High Street"}]}}}"#
+                    .to_string()
+            )
+        );
+    }
+
+    #[test]
+    fn patch_numeric_key_beyond_u64() {
+        assert_eq!(
+            apply_patch(
+                r#"{"keywords":{}}"#,
+                "keywords/99999999999999999999",
+                "true"
+            ),
+            (
+                true,
+                r#"{"keywords":{"99999999999999999999":true}}"#.to_string()
+            )
+        );
+        assert_eq!(
+            apply_patch(
+                r#"{"keywords":{"18446744073709551615":true}}"#,
+                "keywords/18446744073709551616",
+                "null"
+            ),
+            (
+                true,
+                r#"{"keywords":{"18446744073709551615":true}}"#.to_string()
+            )
+        );
+        assert_eq!(
+            apply_patch(
+                r#"{"keywords":{"18446744073709551615":true}}"#,
+                "keywords/18446744073709551615",
+                "null"
+            ),
+            (true, r#"{"keywords":{}}"#.to_string())
+        );
+    }
+
+    #[test]
+    fn patch_unterminated_escape_keeps_tilde() {
+        let participants = r#"{"participants":{"a":{"name":"x"},"b":{"name":"y"}}}"#;
+        assert_eq!(
+            apply_patch(participants, "participants/a~", "null"),
+            (true, participants.to_string())
+        );
+        assert_eq!(
+            apply_patch(r#"{"keywords":{"k1":true}}"#, "keywords/k2~", "true"),
+            (true, r#"{"keywords":{"k1":true,"k2~":true}}"#.to_string())
+        );
+        assert_eq!(
+            apply_patch(r#"{"keywords":{"k1~":true}}"#, "keywords/k1~", "null"),
+            (true, r#"{"keywords":{}}"#.to_string())
+        );
+    }
+
+    #[test]
+    fn patch_index_and_member_tokens() {
+        assert_eq!(
+            apply_patch(r#"{"l":[1,2]}"#, "l/01", "5"),
+            (false, r#"{"l":[1,2]}"#.to_string())
+        );
+        assert_eq!(
+            apply_patch(r#"{"l":[1,2]}"#, "l/-", "5"),
+            (false, r#"{"l":[1,2]}"#.to_string())
+        );
+        assert_eq!(
+            apply_patch(r#"{"m":{}}"#, "m/01", "5"),
+            (true, r#"{"m":{"01":5}}"#.to_string())
+        );
+        assert_eq!(
+            apply_patch(r#"{"m":{}}"#, "m/-", "5"),
+            (true, r#"{"m":{"-":5}}"#.to_string())
+        );
+        assert_eq!(
+            apply_patch(r#"{"m":{"1":1}}"#, "m/01", "null"),
+            (true, r#"{"m":{"1":1}}"#.to_string())
+        );
+        assert_eq!(
+            apply_patch(r#"{"a":"s"}"#, "a/b", "5"),
+            (false, r#"{"a":"s"}"#.to_string())
+        );
+        assert_eq!(
+            apply_patch(r#"{"a":null}"#, "a/b", "null"),
+            (false, r#"{"a":null}"#.to_string())
+        );
+        assert_eq!(
+            apply_patch(r#"{"a":{"x~y/z":1}}"#, "a/x~0y~1z", "null"),
+            (true, r#"{"a":{}}"#.to_string())
+        );
+        assert_eq!(
+            apply_patch(r#"{"a":1}"#, "", "null"),
+            (false, r#"{"a":1}"#.to_string())
+        );
+    }
+
+    #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+    struct SevenProperty;
+
+    impl Property for SevenProperty {
+        fn try_parse(_: Option<&Key<'_, Self>>, _: &str) -> Option<Self> {
+            None
+        }
+
+        fn to_cow(&self) -> Cow<'static, str> {
+            Cow::Borrowed("7")
+        }
+    }
+
+    #[test]
+    fn numeric_token_matches_property_key() {
+        let pointer = JsonPointer::<SevenProperty>::parse("7");
+        assert_eq!(pointer.as_slice(), [JsonPointerItem::Number(7)]);
+
+        let mut value: Value<'static, SevenProperty, Null> = Value::Object(ObjectAsVec::from(
+            vec![(Key::Property(SevenProperty), Value::Bool(true))],
+        ));
+        let mut results = Vec::new();
+        value.eval_jptr(pointer.iter(), &mut results);
+        assert_eq!(
+            results.first().map(|result| result.as_ref()),
+            Some(&Value::Bool(true))
+        );
+
+        assert!(value.patch_jptr(pointer.iter(), Value::Bool(false)));
+        assert_eq!(
+            value,
+            Value::Object(ObjectAsVec::from(vec![(
+                Key::Property(SevenProperty),
+                Value::Bool(false)
+            )]))
+        );
+        assert!(value.patch_jptr(pointer.iter(), Value::Null));
+        assert_eq!(value, Value::Object(ObjectAsVec::new()));
+    }
+
+    #[test]
+    fn number_key_formatting() {
+        for n in [0, 7, 10, 12345, u64::MAX] {
+            let mut buf = super::NumberKey::default();
+            assert_eq!(buf.format(n), n.to_string());
         }
     }
 
