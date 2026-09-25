@@ -11,7 +11,11 @@ use crate::{
     Value,
     json::key::Key,
     json::value::{Element, Property},
+    pointer::NumberKey,
 };
+use std::mem::replace;
+
+const NAMED_KEY_CAPACITY: usize = 24;
 
 /// Represents a JSON key/value type.
 ///
@@ -80,9 +84,23 @@ impl<'ctx, P: Property, E: Element> ObjectAsVec<'ctx, P, E> {
     /// expensive than a `Hashmap` for larger Objects.
     #[inline]
     pub fn get(&self, key: &Key<'_, P>) -> Option<&Value<'ctx, P, E>> {
-        self.0
-            .iter()
-            .find_map(|(k, v)| if k == key { Some(v) } else { None })
+        self.position(key)
+            .and_then(|pos| self.0.get(pos))
+            .map(|(_, v)| v)
+    }
+
+    #[inline]
+    pub(crate) fn position(&self, key: &Key<'_, P>) -> Option<usize> {
+        let mut keys = self.0.iter().map(|(k, _)| k);
+        match key {
+            Key::Property(property) => keys.position(|k| match k {
+                Key::Property(word) => word.key_eq(property),
+                Key::Borrowed(text) => property.key_eq_str(text),
+                Key::Owned(text) => property.key_eq_str(text),
+            }),
+            Key::Borrowed(text) => keys.position(|k| k.matches_str(text)),
+            Key::Owned(text) => keys.position(|k| k.matches_str(text)),
+        }
     }
 
     #[inline]
@@ -103,9 +121,9 @@ impl<'ctx, P: Property, E: Element> ObjectAsVec<'ctx, P, E> {
     /// expensive than a `Hashmap` for larger Objects.
     #[inline]
     pub fn get_mut(&mut self, key: &Key<'ctx, P>) -> Option<&mut Value<'ctx, P, E>> {
-        self.0
-            .iter_mut()
-            .find_map(move |(k, v)| if k == key { Some(v) } else { None })
+        self.position(key)
+            .and_then(|pos| self.0.get_mut(pos))
+            .map(|(_, v)| v)
     }
 
     /// Returns the key-value pair corresponding to the supplied key.
@@ -115,9 +133,9 @@ impl<'ctx, P: Property, E: Element> ObjectAsVec<'ctx, P, E> {
     /// expensive than a `Hashmap` for larger Objects.
     #[inline]
     pub fn get_key_value(&self, key: &Key<'_, P>) -> Option<(&Key<'_, P>, &Value<'ctx, P, E>)> {
-        self.0
-            .iter()
-            .find_map(|(k, v)| if k == key { Some((k, v)) } else { None })
+        self.position(key)
+            .and_then(|pos| self.0.get(pos))
+            .map(|(k, v)| (k, v))
     }
 
     /// An iterator visiting all key-value pairs
@@ -164,7 +182,7 @@ impl<'ctx, P: Property, E: Element> ObjectAsVec<'ctx, P, E> {
     /// expensive than a `Hashmap` for larger Objects.
     #[inline]
     pub fn contains_key(&self, key: &Key<'ctx, P>) -> bool {
-        self.0.iter().any(|(k, _)| k == key)
+        self.position(key).is_some()
     }
 
     #[inline]
@@ -178,11 +196,7 @@ impl<'ctx, P: Property, E: Element> ObjectAsVec<'ctx, P, E> {
     }
 
     pub fn remove(&mut self, key: &Key<'ctx, P>) -> Option<Value<'ctx, P, E>> {
-        if let Some(pos) = self.0.iter().position(|(k, _)| k == key) {
-            Some(self.0.swap_remove(pos).1)
-        } else {
-            None
-        }
+        self.position(key).map(|pos| self.0.swap_remove(pos).1)
     }
 
     /// Inserts a key-value pair into the object.
@@ -200,14 +214,13 @@ impl<'ctx, P: Property, E: Element> ObjectAsVec<'ctx, P, E> {
         value: impl Into<Value<'ctx, P, E>>,
     ) -> Option<Value<'ctx, P, E>> {
         let key = key.into();
-        for (k, v) in &mut self.0 {
-            if k == &key {
-                return Some(std::mem::replace(v, value.into()));
+        match self.position(&key).and_then(|pos| self.0.get_mut(pos)) {
+            Some((_, v)) => Some(replace(v, value.into())),
+            None => {
+                self.0.push((key, value.into()));
+                None
             }
         }
-        // If the key is not found, push the new key-value pair to the end of the Vec
-        self.0.push((key.into(), value.into()));
-        None
     }
 
     /// Inserts a key-value pair into the object if the key does not yet exist, otherwise returns a
@@ -223,13 +236,14 @@ impl<'ctx, P: Property, E: Element> ObjectAsVec<'ctx, P, E> {
         value: impl Into<Value<'ctx, P, E>>,
     ) -> &mut Value<'ctx, P, E> {
         let key = key.into();
-        // get position to circumvent lifetime issue
-        if let Some(pos) = self.0.iter_mut().position(|(k, _)| *k == key) {
-            &mut self.0[pos].1
-        } else {
-            self.0.push((key, value.into()));
-            &mut self.0.last_mut().unwrap().1
-        }
+        let pos = match self.position(&key) {
+            Some(pos) => pos,
+            None => {
+                self.0.push((key, value.into()));
+                self.0.len() - 1
+            }
+        };
+        &mut self.0[pos].1
     }
 
     #[inline]
@@ -252,11 +266,18 @@ impl<'ctx, P: Property, E: Element> ObjectAsVec<'ctx, P, E> {
     }
 
     pub fn insert_named(&mut self, key: Option<String>, value: Value<'ctx, P, E>) -> String {
-        let len = self.0.len();
-        let mut key = key.unwrap_or_else(|| format!("k{}", len + 1));
+        let mut number = NumberKey::default();
+        let suffix = number.format(self.0.len() as u64 + 1);
+        let mut key = key.unwrap_or_else(|| {
+            let mut key = String::with_capacity(NAMED_KEY_CAPACITY);
+            key.push('k');
+            key.push_str(suffix);
+            key
+        });
 
         if self.contains_key(&Key::Borrowed(key.as_str())) {
-            key = format!("{}-{}", key, len + 1);
+            key.push('-');
+            key.push_str(suffix);
         }
 
         self.0.push((Key::Owned(key.clone()), value));

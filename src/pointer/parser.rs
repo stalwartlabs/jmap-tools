@@ -4,136 +4,154 @@
  * SPDX-License-Identifier: Apache-2.0 OR MIT
  */
 
-use crate::{JsonPointer, JsonPointerItem, Key, Property};
+use crate::{JsonPointer, JsonPointerItem, Key, PointerDepth, Property};
 use std::borrow::Cow;
 
-enum TokenType {
-    Unknown,
-    Number,
-    String,
-    Wildcard,
-    Escaped,
-    Invalid,
-}
-
-struct State<P: Property> {
-    buf: Vec<u8>,
-    token: TokenType,
-    start_pos: usize,
-    path: Vec<JsonPointerItem<P>>,
+#[derive(Clone, Copy)]
+struct Token<'x> {
+    text: &'x str,
+    digits: bool,
+    escaped: bool,
 }
 
 impl<P: Property> JsonPointer<P> {
     pub fn parse(value: &str) -> Self {
-        let mut state = State {
-            buf: Vec::new(),
-            token: TokenType::Unknown,
-            start_pos: 0,
-            path: Vec::new(),
-        };
-        let value = value.as_bytes();
+        Self::parse_tokens(value, PointerDepth::default().inner())
+    }
 
-        for (pos, &ch) in value.iter().enumerate() {
-            match (ch, &state.token) {
-                (b'0'..=b'9', TokenType::Unknown | TokenType::Number) => {
-                    state.token = TokenType::Number;
-                }
-                (b'*', TokenType::Unknown) => {
-                    state.token = TokenType::Wildcard;
-                }
-                (b'0', TokenType::Escaped) => {
-                    state.buf.push(b'~');
-                    state.token = TokenType::String;
-                }
-                (b'1', TokenType::Escaped) => {
-                    state.buf.push(b'/');
-                    state.token = TokenType::String;
-                }
-                (b'/', _) => {
-                    state.process(&value[state.start_pos..pos]);
-                    state.token = TokenType::Unknown;
-                    state.start_pos = pos + 1;
-                }
-                (_, TokenType::Escaped | TokenType::Invalid) => {
-                    state.token = TokenType::Invalid;
-                }
-                (_, _) => {
-                    if matches!(&state.token, TokenType::Number | TokenType::Wildcard)
-                        && pos > state.start_pos
-                    {
-                        state
-                            .buf
-                            .extend_from_slice(value.get(state.start_pos..pos).unwrap_or_default());
-                    }
+    pub fn parse_nested(value: &str, depth: PointerDepth) -> Option<Self> {
+        depth
+            .can_nest()
+            .then(|| Self::parse_tokens(value, depth.inner()))
+    }
 
-                    state.token = match ch {
-                        b'~' => TokenType::Escaped,
-                        _ => {
-                            state.buf.push(ch);
-                            TokenType::String
-                        }
-                    };
-                }
-            }
+    fn parse_tokens(value: &str, depth: PointerDepth) -> Self {
+        let mut path = Vec::with_capacity(value.bytes().filter(|&byte| byte == b'/').count() + 1);
+        let (token, mut rest) = Token::split(value);
+
+        if !token.text.is_empty() {
+            path.push(JsonPointerItem::parse_token(None, token, depth));
         }
 
-        state.process(value.get(state.start_pos..).unwrap_or_default());
-
-        if state.path.is_empty() {
-            state.path.push(JsonPointerItem::Root);
+        while let Some(text) = rest {
+            let (token, tail) = Token::split(text);
+            let item = if token.text.is_empty() {
+                JsonPointerItem::Key("".into())
+            } else {
+                JsonPointerItem::parse_token(
+                    path.last().and_then(JsonPointerItem::as_key),
+                    token,
+                    depth,
+                )
+            };
+            path.push(item);
+            rest = tail;
         }
 
-        JsonPointer(state.path)
+        if path.is_empty() {
+            path.push(JsonPointerItem::Root);
+        }
+
+        JsonPointer(path)
     }
 }
 
-impl<P: Property> State<P> {
-    pub fn process(&mut self, token_bytes: &[u8]) {
-        match self.token {
-            TokenType::String | TokenType::Escaped => {
-                if matches!(self.token, TokenType::Escaped) {
-                    self.buf.push(b'~');
+impl<'x> Token<'x> {
+    fn split(text: &'x str) -> (Self, Option<&'x str>) {
+        let mut digits = true;
+        let mut escaped = false;
+        let mut end = text.len();
+        for (pos, byte) in text.bytes().enumerate() {
+            match byte {
+                b'/' => {
+                    end = pos;
+                    break;
                 }
-                let item = std::str::from_utf8(&self.buf).unwrap_or_default();
-                match P::try_parse(self.path.last().and_then(|item| item.as_key()), item) {
-                    Some(prop) => {
-                        self.path.push(JsonPointerItem::Key(Key::Property(prop)));
-                    }
-                    None => {
-                        self.path
-                            .push(JsonPointerItem::Key(Key::Owned(item.to_string())));
-                    }
+                b'~' => {
+                    escaped = true;
+                    digits = false;
                 }
+                b'0'..=b'9' => {}
+                _ => digits = false,
+            }
+        }
+        let token = Token {
+            text: text.get(..end).unwrap_or_default(),
+            digits,
+            escaped,
+        };
+        (token, text.get(end + 1..))
+    }
 
-                self.buf.clear();
+    fn unescape(self) -> Option<String> {
+        let (head, mut rest) = self.text.split_once('~')?;
+        let mut text = String::with_capacity(self.text.len());
+        text.push_str(head);
+        loop {
+            match rest.split_at_checked(1) {
+                Some(("0", tail)) => {
+                    text.push('~');
+                    rest = tail;
+                }
+                Some(("1", tail)) => {
+                    text.push('/');
+                    rest = tail;
+                }
+                _ if rest.is_empty() => {
+                    text.push('~');
+                    return Some(text);
+                }
+                _ => return None,
             }
-            TokenType::Number => {
-                let item = std::str::from_utf8(token_bytes).unwrap_or_default();
-                let token =
-                    match P::try_parse(self.path.last().and_then(|item| item.as_key()), item) {
-                        Some(prop) => JsonPointerItem::Key(Key::Property(prop)),
-                        None => match item.parse::<u64>() {
-                            Ok(index) if item == "0" || !item.starts_with('0') => {
-                                JsonPointerItem::Number(index)
-                            }
-                            _ => JsonPointerItem::Key(Key::Owned(item.to_string())),
-                        },
-                    };
-                self.path.push(token);
+
+            match rest.split_once('~') {
+                Some((segment, tail)) => {
+                    text.push_str(segment);
+                    rest = tail;
+                }
+                None => {
+                    text.push_str(rest);
+                    return Some(text);
+                }
             }
-            TokenType::Wildcard => {
-                self.path.push(JsonPointerItem::Wildcard);
+        }
+    }
+}
+
+impl<P: Property> JsonPointerItem<P> {
+    fn parse_token(
+        parent: Option<&Key<'static, P>>,
+        token: Token<'_>,
+        depth: PointerDepth,
+    ) -> Self {
+        let text = token.text;
+        if token.digits {
+            match P::try_parse_nested(parent, text, depth) {
+                Some(prop) => JsonPointerItem::Key(Key::Property(prop)),
+                None => match text.parse::<u64>() {
+                    Ok(index) if text == "0" || !text.starts_with('0') => {
+                        JsonPointerItem::Number(index)
+                    }
+                    _ => JsonPointerItem::Key(Key::Owned(text.to_string())),
+                },
             }
-            TokenType::Invalid => {
-                self.buf.clear();
-                self.path.push(JsonPointerItem::Invalid(
-                    String::from_utf8_lossy(token_bytes).into_owned(),
-                ));
+        } else if text == "*" {
+            JsonPointerItem::Wildcard
+        } else if !token.escaped {
+            JsonPointerItem::Key(match P::try_parse_nested(parent, text, depth) {
+                Some(prop) => Key::Property(prop),
+                None => Key::Owned(text.to_string()),
+            })
+        } else {
+            match token.unescape() {
+                Some(text) => {
+                    JsonPointerItem::Key(match P::try_parse_nested(parent, &text, depth) {
+                        Some(prop) => Key::Property(prop),
+                        None => Key::Owned(text),
+                    })
+                }
+                None => JsonPointerItem::Invalid(text.to_string()),
             }
-            TokenType::Unknown if self.start_pos > 0 => {
-                self.path.push(JsonPointerItem::Key("".into()));
-            }
-            _ => (),
         }
     }
 }
@@ -152,7 +170,7 @@ impl<P: Property> serde::Serialize for JsonPointer<P> {
     where
         S: serde::Serializer,
     {
-        serializer.serialize_str(&self.to_string())
+        serializer.collect_str(self)
     }
 }
 
@@ -160,8 +178,12 @@ impl<P: Property> serde::Serialize for JsonPointer<P> {
 mod tests {
 
     use super::{JsonPointer, JsonPointerItem};
-    use crate::{Key, Null, Property};
-    use std::borrow::Cow;
+    use crate::json::de::testkit::{TestProp as Nested, TestValue};
+    use crate::{Key, Null, PointerDepth, Property, Value};
+    use std::{borrow::Cow, iter::successors, thread};
+
+    const SMALL_STACK: usize = 256 * 1024;
+    const DEEP_LEVELS: usize = 200;
 
     #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
     enum TestProp {
@@ -418,6 +440,107 @@ mod tests {
                 JsonPointerItem::Number(70),
             ]
         );
+    }
+
+    fn nested_keys(levels: usize) -> Vec<String> {
+        successors(Some(String::from("a/b")), |key| {
+            Some(JsonPointer::<Null>::encode([key.as_str(), "x"]))
+        })
+        .take(levels)
+        .collect()
+    }
+
+    fn owned(text: &str) -> JsonPointerItem<Nested> {
+        JsonPointerItem::Key(Key::Owned(text.to_string()))
+    }
+
+    fn expected_nesting(keys: &[String], levels: usize) -> Nested {
+        let limit = usize::from(PointerDepth::LIMIT);
+        let innermost = match levels
+            .checked_sub(limit + 1)
+            .and_then(|untyped| keys.get(untyped))
+        {
+            Some(untyped) => vec![owned(untyped), owned("x")],
+            None => vec![owned("a"), owned("b")],
+        };
+        (1..levels.min(limit)).fold(Nested::Pointer(JsonPointer::new(innermost)), |inner, _| {
+            Nested::Pointer(JsonPointer::new(vec![
+                JsonPointerItem::Key(Key::Property(inner)),
+                owned("x"),
+            ]))
+        })
+    }
+
+    fn nesting(property: &Nested) -> usize {
+        match property {
+            Nested::Pointer(pointer) => {
+                1 + match pointer.first() {
+                    Some(JsonPointerItem::Key(Key::Property(inner))) => nesting(inner),
+                    _ => 0,
+                }
+            }
+            _ => 0,
+        }
+    }
+
+    fn only_key(value: &TestValue<'_>) -> String {
+        let keys = value
+            .as_object()
+            .map(|object| {
+                object
+                    .keys()
+                    .map(|key| format!("{key:?}"))
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        assert_eq!(keys.len(), 1, "{keys:?}");
+        keys.concat()
+    }
+
+    #[test]
+    fn nested_pointer_keys_stop_at_the_depth_limit() {
+        thread::Builder::new()
+            .stack_size(SMALL_STACK)
+            .spawn(|| {
+                let keys = nested_keys(DEEP_LEVELS);
+                let limit = usize::from(PointerDepth::LIMIT);
+                for (levels, key) in (1..)
+                    .zip(&keys)
+                    .filter(|(levels, _)| *levels <= limit + 24 || *levels == DEEP_LEVELS)
+                {
+                    let expected = expected_nesting(&keys, levels);
+                    assert_eq!(nesting(&expected), levels.min(limit), "{levels}");
+                    let expected_key = format!("{:?}", Key::<Nested>::Property(expected.clone()));
+                    let json = format!("{{\"{key}\":1}}");
+                    let parsed: TestValue<'_> = Value::parse_json(&json).expect("parses");
+                    assert_eq!(only_key(&parsed), expected_key, "{levels}");
+                    let parsed: TestValue<'_> = serde_json::from_str(&json).expect("parses");
+                    assert_eq!(only_key(&parsed), expected_key, "{levels}");
+                    let Nested::Pointer(expected) = expected else {
+                        panic!("{levels} levels must parse to a pointer");
+                    };
+                    assert_eq!(
+                        format!("{:?}", JsonPointer::<Nested>::parse(key)),
+                        format!("{expected:?}"),
+                        "{levels}"
+                    );
+                    assert_eq!(expected.to_string(), *key, "{levels}");
+                }
+            })
+            .expect("spawns")
+            .join()
+            .expect("finishes");
+    }
+
+    #[test]
+    fn parse_nested_refuses_to_go_past_the_depth_limit() {
+        let mut depth = PointerDepth::default();
+        for _ in 0..PointerDepth::LIMIT {
+            let pointer = JsonPointer::<Null>::parse_nested("a/b", depth).expect("below the limit");
+            assert_eq!(pointer, JsonPointer::parse("a/b"));
+            depth = depth.inner();
+        }
+        assert_eq!(JsonPointer::<Null>::parse_nested("a/b", depth), None);
     }
 
     #[test]

@@ -1,11 +1,13 @@
-use serde::Serialize;
+use serde::{Serialize, Serializer};
 
 use crate::json::index::Index;
 use crate::json::key::Key;
 use crate::json::num::{N, Number};
 pub use crate::json::object_vec::ObjectAsVec;
+use crate::json::parser::Parser;
+use crate::pointer::PointerDepth;
 use core::fmt;
-use core::hash::Hash;
+use core::hash::{Hash, Hasher};
 use std::borrow::Cow;
 use std::fmt::{Debug, Display};
 use std::str::FromStr;
@@ -26,6 +28,26 @@ pub enum Value<'ctx, P: Property, E: Element> {
 pub trait Property: Debug + Clone + PartialEq + Eq + PartialOrd + Ord + Hash {
     fn try_parse(key: Option<&Key<'_, Self>>, value: &str) -> Option<Self>;
     fn to_cow(&self) -> Cow<'static, str>;
+
+    fn try_parse_nested(key: Option<&Key<'_, Self>>, value: &str, _: PointerDepth) -> Option<Self> {
+        Self::try_parse(key, value)
+    }
+
+    fn key_eq(&self, other: &Self) -> bool {
+        self.to_cow() == other.to_cow()
+    }
+
+    fn key_eq_str(&self, other: &str) -> bool {
+        self.to_cow() == other
+    }
+
+    fn key_hash<H: Hasher>(&self, state: &mut H) {
+        self.to_cow().hash(state)
+    }
+
+    fn serialize_text<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(&self.to_cow())
+    }
 }
 
 pub trait Element: Clone + PartialEq + Eq + Hash + Debug + Sized {
@@ -33,6 +55,10 @@ pub trait Element: Clone + PartialEq + Eq + Hash + Debug + Sized {
 
     fn try_parse<P>(key: &Key<'_, Self::Property>, value: &str) -> Option<Self>;
     fn to_cow(&self) -> Cow<'static, str>;
+
+    fn serialize_text<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(&self.to_cow())
+    }
 }
 
 impl<'ctx, P: Property, E: Element<Property = P>> Value<'ctx, P, E> {
@@ -49,7 +75,7 @@ impl<'ctx, P: Property, E: Element<Property = P>> Value<'ctx, P, E> {
     }
 
     pub fn parse_json(json: &'ctx str) -> Result<Self, String> {
-        serde_json::from_str(json).map_err(|e| e.to_string())
+        Parser::parse(json)
     }
 
     /// Returns a reference to the value corresponding to the key.

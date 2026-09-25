@@ -81,22 +81,21 @@ impl<P: Property> Serialize for Key<'_, P> {
     where
         S: Serializer,
     {
-        serializer.serialize_str(self.to_string().as_ref())
+        match self {
+            Key::Property(property) => property.serialize_text(serializer),
+            Key::Borrowed(text) => serializer.serialize_str(text),
+            Key::Owned(text) => serializer.serialize_str(text),
+        }
     }
 }
 
 impl<P: Property> PartialEq for Key<'_, P> {
+    #[inline]
     fn eq(&self, other: &Self) -> bool {
-        match (self, other) {
-            (Key::Property(k1), Key::Property(k2)) => k1.to_cow() == k2.to_cow(),
-            (Key::Property(k1), Key::Borrowed(k2)) => k1.to_cow() == *k2,
-            (Key::Property(k1), Key::Owned(k2)) => k1.to_cow() == k2.as_str(),
-            (Key::Owned(k1), Key::Owned(k2)) => k1 == k2,
-            (Key::Owned(k1), Key::Borrowed(k2)) => k1 == k2,
-            (Key::Owned(k1), Key::Property(k2)) => k1.as_str() == k2.to_cow(),
-            (Key::Borrowed(k1), Key::Borrowed(k2)) => k1 == k2,
-            (Key::Borrowed(k1), Key::Owned(k2)) => k1 == k2,
-            (Key::Borrowed(k1), Key::Property(k2)) => *k1 == k2.to_cow(),
+        match other {
+            Key::Property(property) => self.matches_property(property),
+            Key::Borrowed(text) => self.matches_str(text),
+            Key::Owned(text) => self.matches_str(text),
         }
     }
 }
@@ -104,9 +103,10 @@ impl<P: Property> PartialEq for Key<'_, P> {
 impl<P: Property> Eq for Key<'_, P> {}
 
 impl<P: Property> Hash for Key<'_, P> {
+    #[inline]
     fn hash<H: Hasher>(&self, state: &mut H) {
         match self {
-            Key::Property(word) => word.to_cow().hash(state),
+            Key::Property(word) => word.key_hash(state),
             Key::Borrowed(s) => s.hash(state),
             Key::Owned(s) => s.hash(state),
         }
@@ -126,8 +126,9 @@ impl<P: Property> Ord for Key<'_, P> {
 }
 
 impl<P: Property> PartialEq<&str> for Key<'_, P> {
+    #[inline]
     fn eq(&self, other: &&str) -> bool {
-        self.to_string() == *other
+        self.matches_str(other)
     }
 }
 
@@ -160,6 +161,24 @@ impl<'x, P: Property> From<Cow<'x, str>> for Key<'x, P> {
 }
 
 impl<P: Property> Key<'_, P> {
+    #[inline]
+    pub(crate) fn matches_property(&self, property: &P) -> bool {
+        match self {
+            Key::Property(word) => word.key_eq(property),
+            Key::Borrowed(text) => property.key_eq_str(text),
+            Key::Owned(text) => property.key_eq_str(text),
+        }
+    }
+
+    #[inline]
+    pub(crate) fn matches_str(&self, text: &str) -> bool {
+        match self {
+            Key::Property(word) => word.key_eq_str(text),
+            Key::Borrowed(other) => *other == text,
+            Key::Owned(other) => other == text,
+        }
+    }
+
     pub fn to_string(&self) -> Cow<'_, str> {
         match self {
             Key::Borrowed(s) => Cow::Borrowed(s),

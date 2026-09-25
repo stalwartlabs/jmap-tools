@@ -6,14 +6,19 @@
 
 pub(crate) mod eval;
 pub(crate) mod parser;
+#[cfg(test)]
+mod tests;
 
 use crate::{Element, Key, Property, Value};
 use std::{
     borrow::Cow,
-    fmt::{Debug, Display, Formatter},
+    fmt::{self, Debug, Display, Formatter, Write},
     iter::Peekable,
     slice::Iter,
+    str::from_utf8,
 };
+
+const ENCODE_CAPACITY: usize = 32;
 
 pub trait JsonPointerHandler<'x, P: Property, E: Element>: Debug {
     fn eval_jptr<'y>(
@@ -43,6 +48,21 @@ pub enum JsonPointerItem<P: Property> {
     Number(u64),
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct PointerDepth(u8);
+
+impl PointerDepth {
+    pub const LIMIT: u8 = 16;
+
+    fn inner(self) -> Self {
+        PointerDepth(self.0 + 1)
+    }
+
+    fn can_nest(self) -> bool {
+        self.0 < Self::LIMIT
+    }
+}
+
 impl<P: Property> JsonPointer<P> {
     pub fn new(items: Vec<JsonPointerItem<P>>) -> Self {
         Self(items)
@@ -66,19 +86,12 @@ impl<P: Property> JsonPointer<P> {
         I: IntoIterator<Item = T>,
         T: AsRef<str>,
     {
-        let mut encoded = String::with_capacity(8);
+        let mut encoded = String::with_capacity(ENCODE_CAPACITY);
         for (pos, item) in items.into_iter().enumerate() {
             if pos > 0 {
                 encoded.push('/');
             }
-            let item = item.as_ref();
-            for c in item.chars() {
-                match c {
-                    '~' => encoded.push_str("~0"),
-                    '/' => encoded.push_str("~1"),
-                    _ => encoded.push(c),
-                }
-            }
+            encoded.extend(EscapedToken(item.as_ref()).pieces());
         }
         encoded
     }
@@ -150,28 +163,61 @@ impl<P: Property> JsonPointerItem<P> {
 }
 
 impl<P: Property> Display for JsonPointer<P> {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         for (i, ptr) in self.0.iter().enumerate() {
             if i > 0 {
-                write!(f, "/")?;
+                f.write_char('/')?;
             }
 
             match ptr {
                 JsonPointerItem::Root => {}
-                JsonPointerItem::Wildcard => write!(f, "*")?,
-                JsonPointerItem::Invalid(text) => write!(f, "{text}")?,
-                JsonPointerItem::Key(k) => {
-                    for c in k.to_string().chars() {
-                        match c {
-                            '~' => write!(f, "~0")?,
-                            '/' => write!(f, "~1")?,
-                            _ => write!(f, "{}", c)?,
-                        }
-                    }
-                }
-                JsonPointerItem::Number(n) => write!(f, "{}", n)?,
+                JsonPointerItem::Wildcard => f.write_char('*')?,
+                JsonPointerItem::Invalid(text) => f.write_str(text)?,
+                JsonPointerItem::Key(k) => EscapedToken(&k.to_string())
+                    .pieces()
+                    .try_for_each(|piece| f.write_str(piece))?,
+                JsonPointerItem::Number(n) => f.write_str(NumberKey::default().format(*n))?,
             }
         }
         Ok(())
+    }
+}
+
+#[derive(Clone, Copy)]
+struct EscapedToken<'x>(&'x str);
+
+impl<'x> EscapedToken<'x> {
+    fn pieces(self) -> impl Iterator<Item = &'x str> {
+        self.0
+            .split_inclusive(['~', '/'])
+            .flat_map(|piece| match piece.strip_suffix(['~', '/']) {
+                Some(text) if piece.ends_with('~') => [text, "~0"],
+                Some(text) => [text, "~1"],
+                None => [piece, ""],
+            })
+            .filter(|piece| !piece.is_empty())
+    }
+}
+
+#[derive(Default)]
+pub(crate) struct NumberKey([u8; 20]);
+
+impl NumberKey {
+    pub(crate) fn format(&mut self, mut n: u64) -> &str {
+        let mut pos = self.0.len();
+        loop {
+            pos -= 1;
+            if let Some(digit) = self.0.get_mut(pos) {
+                *digit = b'0' + (n % 10) as u8;
+            }
+            n /= 10;
+            if n == 0 || pos == 0 {
+                break;
+            }
+        }
+        self.0
+            .get(pos..)
+            .and_then(|digits| from_utf8(digits).ok())
+            .unwrap_or_default()
     }
 }

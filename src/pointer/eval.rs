@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0 OR MIT
  */
 
-use super::{JsonPointerHandler, JsonPointerItem};
+use super::{JsonPointerHandler, JsonPointerItem, NumberKey};
 use crate::json::key::Key;
 use crate::pointer::JsonPointerIter;
 use crate::{Element, ObjectAsVec, Property, Value};
@@ -34,8 +34,7 @@ impl<'x, P: Property, E: Element> JsonPointerHandler<'x, P, E> for Value<'x, P, 
                 }
                 Value::Object(map) => {
                     let mut buf = NumberKey::default();
-                    let n = buf.format(*n);
-                    if let Some((_, v)) = map.0.iter().find(|(k, _)| key_matches(k, n)) {
+                    if let Some(v) = map.get(&Key::Borrowed(buf.format(*n))) {
                         v.eval_jptr(pointer, results);
                     }
                 }
@@ -69,7 +68,7 @@ impl<'x, P: Property, E: Element> JsonPointerHandler<'x, P, E> for Value<'x, P, 
         match pointer.next() {
             Some(JsonPointerItem::Key(key)) => {
                 if let Value::Object(map) = self {
-                    return map.patch_entry(|k| k == key, || key.clone(), pointer, value);
+                    return map.patch_entry(key, || key.clone(), pointer, value);
                 }
             }
             Some(JsonPointerItem::Number(n)) => match self {
@@ -92,7 +91,7 @@ impl<'x, P: Property, E: Element> JsonPointerHandler<'x, P, E> for Value<'x, P, 
                     let mut buf = NumberKey::default();
                     let digits = buf.format(*n);
                     return map.patch_entry(
-                        |k| key_matches(k, digits),
+                        &Key::Borrowed(digits),
                         || Key::Owned(digits.to_string()),
                         pointer,
                         value,
@@ -117,12 +116,12 @@ impl<'x, P: Property, E: Element> JsonPointerHandler<'x, P, E> for Value<'x, P, 
 impl<'x, P: Property, E: Element> ObjectAsVec<'x, P, E> {
     fn patch_entry<'y: 'x>(
         &mut self,
-        matches: impl Fn(&Key<'x, P>) -> bool,
+        key: &Key<'_, P>,
         new_key: impl FnOnce() -> Key<'static, P>,
         mut pointer: JsonPointerIter<'_, P>,
         value: Value<'y, P, E>,
     ) -> bool {
-        let Some(pos) = self.0.iter().position(|(k, _)| matches(k)) else {
+        let Some(pos) = self.position(key) else {
             return match (pointer.peek().is_none(), value) {
                 (false, _) => false,
                 (true, Value::Null) => true,
@@ -146,37 +145,6 @@ impl<'x, P: Property, E: Element> ObjectAsVec<'x, P, E> {
         } else {
             false
         }
-    }
-}
-
-fn key_matches<P: Property>(key: &Key<'_, P>, digits: &str) -> bool {
-    match key {
-        Key::Borrowed(key) => *key == digits,
-        Key::Owned(key) => key == digits,
-        Key::Property(property) => property.to_cow() == digits,
-    }
-}
-
-#[derive(Default)]
-struct NumberKey([u8; 20]);
-
-impl NumberKey {
-    fn format(&mut self, mut n: u64) -> &str {
-        let mut pos = self.0.len();
-        loop {
-            pos -= 1;
-            if let Some(digit) = self.0.get_mut(pos) {
-                *digit = b'0' + (n % 10) as u8;
-            }
-            n /= 10;
-            if n == 0 || pos == 0 {
-                break;
-            }
-        }
-        self.0
-            .get(pos..)
-            .and_then(|digits| std::str::from_utf8(digits).ok())
-            .unwrap_or_default()
     }
 }
 
