@@ -836,18 +836,22 @@ mod tests {
     }
 
     #[test]
-    fn patch_unterminated_escape_keeps_tilde() {
+    fn patch_unterminated_escape_is_rejected() {
         let participants = r#"{"participants":{"a":{"name":"x"},"b":{"name":"y"}}}"#;
         assert_eq!(
             apply_patch(participants, "participants/a~", "null"),
-            (true, participants.to_string())
+            (false, participants.to_string())
         );
         assert_eq!(
             apply_patch(r#"{"keywords":{"k1":true}}"#, "keywords/k2~", "true"),
-            (true, r#"{"keywords":{"k1":true,"k2~":true}}"#.to_string())
+            (false, r#"{"keywords":{"k1":true}}"#.to_string())
         );
         assert_eq!(
             apply_patch(r#"{"keywords":{"k1~":true}}"#, "keywords/k1~", "null"),
+            (false, r#"{"keywords":{"k1~":true}}"#.to_string())
+        );
+        assert_eq!(
+            apply_patch(r#"{"keywords":{"k1~":true}}"#, "keywords/k1~0", "null"),
             (true, r#"{"keywords":{}}"#.to_string())
         );
     }

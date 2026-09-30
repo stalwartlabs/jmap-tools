@@ -14,6 +14,7 @@ pub enum Name {
     Items,
     Kind,
     Count,
+    Meta,
 }
 
 impl Name {
@@ -24,6 +25,7 @@ impl Name {
             "items" => Some(Name::Items),
             "kind" => Some(Name::Kind),
             "count" => Some(Name::Count),
+            "meta" => Some(Name::Meta),
             _ => None,
         }
     }
@@ -35,6 +37,7 @@ impl Name {
             Name::Items => "items",
             Name::Kind => "kind",
             Name::Count => "count",
+            Name::Meta => "meta",
         }
     }
 }
@@ -50,6 +53,10 @@ impl Property for Name {
 
     fn to_cow(&self) -> Cow<'static, str> {
         Cow::Borrowed(self.as_str())
+    }
+
+    fn is_opaque(&self) -> bool {
+        matches!(self, Name::Meta)
     }
 }
 

@@ -11,6 +11,7 @@ use std::borrow::Cow;
 use std::cmp::Ordering;
 use std::fmt;
 use std::hash::{Hash, Hasher};
+use std::marker::PhantomData;
 
 #[derive(Debug, Clone)]
 pub enum Key<'x, P: Property> {
@@ -73,6 +74,48 @@ impl<'de, 'x, P: Property> Visitor<'de> for KeyVisitor<'x, P> {
             Some(word) => Ok(Key::Property(word)),
             None => Ok(Key::Owned(value)),
         }
+    }
+}
+
+pub(crate) struct OpaqueKey<P: Property>(pub PhantomData<P>);
+
+impl<'de, P: Property> DeserializeSeed<'de> for OpaqueKey<P> {
+    type Value = Key<'de, P>;
+
+    fn deserialize<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        deserializer.deserialize_any(self)
+    }
+}
+
+impl<'de, P: Property> Visitor<'de> for OpaqueKey<P> {
+    type Value = Key<'de, P>;
+
+    fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("a string")
+    }
+
+    fn visit_borrowed_str<ERR>(self, value: &'de str) -> Result<Self::Value, ERR>
+    where
+        ERR: de::Error,
+    {
+        Ok(Key::Borrowed(value))
+    }
+
+    fn visit_str<ERR>(self, value: &str) -> Result<Self::Value, ERR>
+    where
+        ERR: de::Error,
+    {
+        Ok(Key::Owned(value.to_owned()))
+    }
+
+    fn visit_string<ERR>(self, value: String) -> Result<Self::Value, ERR>
+    where
+        ERR: de::Error,
+    {
+        Ok(Key::Owned(value))
     }
 }
 
@@ -168,6 +211,11 @@ impl<P: Property> Key<'_, P> {
             Key::Borrowed(text) => property.key_eq_str(text),
             Key::Owned(text) => property.key_eq_str(text),
         }
+    }
+
+    #[inline]
+    pub(crate) fn is_opaque(&self) -> bool {
+        matches!(self, Key::Property(property) if property.is_opaque())
     }
 
     #[inline]

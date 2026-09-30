@@ -5,17 +5,20 @@
  */
 
 use super::value::Value;
-use crate::json::key::{self, Key};
+use crate::json::key::{self, Key, OpaqueKey};
 use crate::json::object_vec::ObjectAsVec;
 use crate::{Element, Property};
 use serde::de::{Deserialize, DeserializeSeed, MapAccess, SeqAccess, Visitor};
 use std::borrow::Cow;
+use std::marker::PhantomData;
+use std::mem;
 
 type Member<'de, P, E> = (Key<'de, P>, Value<'de, P, E>);
 
 struct Scratch<'de, P: Property, E: Element> {
     members: Vec<Member<'de, P, E>>,
     items: Vec<Value<'de, P, E>>,
+    opaque: bool,
 }
 
 impl<P: Property, E: Element> Scratch<'_, P, E> {
@@ -23,7 +26,52 @@ impl<P: Property, E: Element> Scratch<'_, P, E> {
         Scratch {
             members: Vec::new(),
             items: Vec::new(),
+            opaque: false,
         }
+    }
+}
+
+impl<'de, P: Property, E: Element<Property = P>> Scratch<'de, P, E> {
+    #[cold]
+    #[inline(never)]
+    fn opaque_seq<V>(&mut self, mut visitor: V) -> Result<Value<'de, P, E>, V::Error>
+    where
+        V: SeqAccess<'de>,
+    {
+        let outer = mem::replace(&mut self.opaque, true);
+        let start = self.items.len();
+
+        while let Some(item) = visitor.next_element_seed(ValueSeed {
+            parent_key: None,
+            scratch: &mut *self,
+        })? {
+            self.items.push(item);
+        }
+
+        self.opaque = outer;
+        Ok(Value::Array(self.items.split_off(start)))
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn opaque_map<V>(&mut self, mut visitor: V) -> Result<Value<'de, P, E>, V::Error>
+    where
+        V: MapAccess<'de>,
+    {
+        let outer = mem::replace(&mut self.opaque, true);
+        let start = self.members.len();
+
+        while let Some(key) = visitor.next_key_seed(OpaqueKey(PhantomData))? {
+            let value = visitor.next_value_seed(ValueSeed {
+                parent_key: None,
+                scratch: &mut *self,
+            })?;
+
+            self.members.push((key, value));
+        }
+
+        self.opaque = outer;
+        Ok(Value::Object(ObjectAsVec(self.members.split_off(start))))
     }
 }
 
@@ -62,7 +110,9 @@ impl<'de, P: Property, E: Element<Property = P>> DeserializeSeed<'de>
 impl<'de, P: Property, E: Element<Property = P>> ValueSeed<'_, '_, 'de, P, E> {
     #[inline]
     fn string(&self, text: &str) -> Option<E> {
-        self.parent_key.and_then(|key| E::try_parse::<P>(key, text))
+        self.parent_key
+            .filter(|key| !key.is_opaque())
+            .and_then(|key| E::try_parse::<P>(key, text))
     }
 }
 
@@ -223,6 +273,10 @@ impl<'de, P: Property, E: Element<Property = P>> Visitor<'de> for ValueSeed<'_, 
     where
         V: SeqAccess<'de>,
     {
+        if self.parent_key.is_some_and(Key::is_opaque) {
+            return self.scratch.opaque_seq(visitor);
+        }
+
         let start = self.scratch.items.len();
 
         while let Some(elem) = visitor.next_element_seed(ValueSeed {
@@ -240,6 +294,10 @@ impl<'de, P: Property, E: Element<Property = P>> Visitor<'de> for ValueSeed<'_, 
     where
         V: MapAccess<'de>,
     {
+        if self.scratch.opaque || self.parent_key.is_some_and(Key::is_opaque) {
+            return self.scratch.opaque_map(visitor);
+        }
+
         let start = self.scratch.members.len();
 
         while let Some(key) = visitor.next_key_seed(key::DeserializationContext {
@@ -264,7 +322,8 @@ mod tests {
 
     use std::borrow::Cow;
 
-    use crate::{Null, Value};
+    use crate::json::de::testkit::{TestProp, TestValue, describe};
+    use crate::{Element, Key, Null, Value};
 
     #[test]
     fn deserialize_json_test() {
@@ -306,13 +365,140 @@ mod tests {
             &Value::Str(Cow::Borrowed("string\"_val"))
         );
     }
+
+    fn described(json: &str) -> String {
+        let direct: TestValue<'_> = Value::parse_json(json).expect("parse_json accepts it");
+        let from_str: TestValue<'_> = serde_json::from_str(json).expect("from_str accepts it");
+        let from_slice: TestValue<'_> =
+            serde_json::from_slice(json.as_bytes()).expect("from_slice accepts it");
+        let described = describe(&direct);
+        assert_eq!(describe(&from_str), described, "{json}");
+        assert_eq!(describe(&from_slice), described, "{json}");
+        described
+    }
+
+    fn round_trips(json: &str) {
+        let value: TestValue<'_> = serde_json::from_str(json).expect("from_str accepts it");
+        assert_eq!(
+            serde_json::to_string(&value).expect("serializes"),
+            json,
+            "{json}"
+        );
+    }
+
+    #[test]
+    fn opaque_property_values_stay_untyped() {
+        for (json, expected) in [
+            (
+                r#"{"meta":{"title":"Event","@type":"Event","created":"12","ids":{"x":"Task"},"fileblob":"b","list":[{"@type":"Task","created":"7"},"Event",["created",{"meta":"12"}]]},"@type":"Event","created":"12","fileblob":"b"}"#,
+                concat!(
+                    r#"{4:PMeta={6:B"title"=B"Event",B"@type"=B"Event",B"created"=B"12","#,
+                    r#"B"ids"={1:B"x"=B"Task",},B"fileblob"=B"b","#,
+                    r#"B"list"=[3:{2:B"@type"=B"Task",B"created"=B"7",},B"Event","#,
+                    r#"[2:B"created",{1:B"meta"=B"12",},],],},"#,
+                    r#"PType=Element(Event),PCreated=Element(12),"#,
+                    r#"B"fileblob"=Element(b),}"#
+                ),
+            ),
+            (
+                r#"{"meta":[{"@type":"Event"},"Task",[{"created":"1"}]],"@type":"Task"}"#,
+                concat!(
+                    r#"{2:PMeta=[3:{1:B"@type"=B"Event",},B"Task",[1:{1:B"created"=B"1",},],],"#,
+                    r#"PType=Element(Task),}"#
+                ),
+            ),
+            (
+                r#"{"title":{"meta":{"@type":"Event"},"@type":"Event"},"list":[{"meta":{"created":"1"},"created":"1"}]}"#,
+                concat!(
+                    r#"{2:PTitle={2:PMeta={1:B"@type"=B"Event",},PType=Element(Event),},"#,
+                    r#"B"list"=[1:{2:PMeta={1:B"created"=B"1",},PCreated=Element(1),},],}"#
+                ),
+            ),
+            (
+                r#"{"meta/title":{"@type":"Event","created":"12"},"title/x":{"@type":"Event"}}"#,
+                concat!(
+                    r#"{2:PPointer(JsonPointer([Key(Property(Meta)), Key(Owned("title"))]))="#,
+                    r#"{2:B"@type"=B"Event",B"created"=B"12",},"#,
+                    r#"PPointer(JsonPointer([Key(Property(Title)), Key(Owned("x"))]))="#,
+                    r#"{1:PType=Element(Event),},}"#
+                ),
+            ),
+            (
+                r#"{"meta":"Event","created":"3"}"#,
+                r#"{2:PMeta=B"Event",PCreated=Element(3),}"#,
+            ),
+            (
+                r#"{"meta/x/fileblob":"b","title/fileblob":"b","meta/x":{"a/fileblob":"b"}}"#,
+                concat!(
+                    r#"{3:PPointer(JsonPointer([Key(Property(Meta)), Key(Owned("x")), "#,
+                    r#"Key(Owned("fileblob"))]))=B"b","#,
+                    r#"PPointer(JsonPointer([Key(Property(Title)), Key(Owned("fileblob"))]))="#,
+                    r#"Element(b),"#,
+                    r#"PPointer(JsonPointer([Key(Property(Meta)), Key(Owned("x"))]))="#,
+                    r#"{1:B"a/fileblob"=B"b",},}"#
+                ),
+            ),
+        ] {
+            assert_eq!(described(json), expected, "{json}");
+            round_trips(json);
+        }
+    }
+
+    #[test]
+    fn opaque_property_values_keep_escaped_text() {
+        for (json, expected) in [
+            (
+                r#"{"meta":{"x\u0041blob":"a\"b","created":"\u0031","\u0040type":"Event"}}"#,
+                r#"{1:PMeta={3:O"xAblob"=O"a\"b",B"created"=O"1",O"@type"=B"Event",},}"#,
+            ),
+            (
+                r#"{"x\u0041blob":"a","created":"\u0031","\u0040type":"Event"}"#,
+                r#"{3:O"xAblob"=Element(a),PCreated=Element(1),PType=Element(Event),}"#,
+            ),
+        ] {
+            assert_eq!(described(json), expected, "{json}");
+        }
+    }
+
+    #[derive(Debug, Clone, PartialEq, Eq, Hash)]
+    struct OpaqueGuard;
+
+    impl Element for OpaqueGuard {
+        type Property = TestProp;
+
+        fn try_parse<P>(key: &Key<'_, Self::Property>, _: &str) -> Option<Self> {
+            assert!(!key.is_opaque(), "element parsed under opaque key {key:?}");
+            Some(OpaqueGuard)
+        }
+
+        fn to_cow(&self) -> Cow<'static, str> {
+            Cow::Borrowed("guard")
+        }
+    }
+
+    #[test]
+    fn opaque_keys_skip_element_parsing() {
+        let json = r#"{"meta":"a","meta/x":"b","meta/x/y":"c","title":"d"}"#;
+        let direct = Value::<TestProp, OpaqueGuard>::parse_json(json).expect("parses");
+        let from_str: Value<'_, TestProp, OpaqueGuard> =
+            serde_json::from_str(json).expect("parses");
+        for value in [direct, from_str] {
+            let kinds = value
+                .as_object()
+                .expect("object")
+                .iter()
+                .map(|(_, value)| matches!(value, Value::Element(_)))
+                .collect::<Vec<_>>();
+            assert_eq!(kinds, [false, false, false, true], "{value:?}");
+        }
+    }
 }
 
 #[cfg(test)]
 pub(crate) mod testkit {
     use crate::json::key::Key;
     use crate::json::value::Value;
-    use crate::{Element, JsonPointer, PointerDepth, Property};
+    use crate::{Element, JsonPointer, JsonPointerItem, PointerDepth, Property};
     use serde::Serializer;
     use std::borrow::Cow;
     use std::fmt::Write;
@@ -357,6 +543,7 @@ pub(crate) mod testkit {
         Title,
         Type,
         Created,
+        Meta,
         Pointer(JsonPointer<TestProp>),
     }
 
@@ -380,8 +567,20 @@ pub(crate) mod testkit {
                     "title" => Some(TestProp::Title),
                     "@type" => Some(TestProp::Type),
                     "created" => Some(TestProp::Created),
+                    "meta" => Some(TestProp::Meta),
                     _ => None,
                 },
+            }
+        }
+
+        fn is_opaque(&self) -> bool {
+            match self {
+                TestProp::Meta => true,
+                TestProp::Pointer(pointer) => matches!(
+                    pointer.first(),
+                    Some(JsonPointerItem::Key(Key::Property(TestProp::Meta)))
+                ),
+                _ => false,
             }
         }
 
@@ -392,6 +591,7 @@ pub(crate) mod testkit {
                 TestProp::Title => "title".into(),
                 TestProp::Type => "@type".into(),
                 TestProp::Created => "created".into(),
+                TestProp::Meta => "meta".into(),
                 TestProp::Pointer(pointer) => pointer.to_string().into(),
             }
         }
@@ -425,6 +625,14 @@ pub(crate) mod testkit {
                     Some(TestElement::Blob(value.to_string()))
                 }
                 Key::Owned(text) if text.ends_with("blob") => {
+                    Some(TestElement::Blob(value.to_string()))
+                }
+                Key::Property(TestProp::Pointer(pointer))
+                    if pointer
+                        .last()
+                        .and_then(JsonPointerItem::as_key)
+                        .is_some_and(|key| key.to_string().ends_with("blob")) =>
+                {
                     Some(TestElement::Blob(value.to_string()))
                 }
                 _ => None,
@@ -518,6 +726,8 @@ pub(crate) mod testkit {
         "2025-01-01T00:00:00",
         "a~b",
         "entries",
+        "meta",
+        "meta/ids",
     ];
 
     const STRINGS: &[&str] = &[

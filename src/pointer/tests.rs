@@ -509,7 +509,7 @@ fn parse_classifies_tokens() {
             r#"[Key(Owned("a~b/c"))]"#,
         ),
         ("~2", r#"[Invalid("~2")]"#, r#"[Invalid("~2")]"#),
-        ("a~", r#"[Key(Owned("a~"))]"#, r#"[Key(Owned("a~"))]"#),
+        ("a~", r#"[Invalid("a~")]"#, r#"[Invalid("a~")]"#),
         ("~~", r#"[Invalid("~~")]"#, r#"[Invalid("~~")]"#),
         (
             "ids/x/7",

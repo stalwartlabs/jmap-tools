@@ -33,6 +33,10 @@ pub trait Property: Debug + Clone + PartialEq + Eq + PartialOrd + Ord + Hash {
         Self::try_parse(key, value)
     }
 
+    fn is_opaque(&self) -> bool {
+        false
+    }
+
     fn key_eq(&self, other: &Self) -> bool {
         self.to_cow() == other.to_cow()
     }

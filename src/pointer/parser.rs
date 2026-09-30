@@ -26,30 +26,41 @@ impl<P: Property> JsonPointer<P> {
     }
 
     fn parse_tokens(value: &str, depth: PointerDepth) -> Self {
-        let mut path = Vec::with_capacity(value.bytes().filter(|&byte| byte == b'/').count() + 1);
-        let (token, mut rest) = Token::split(value);
+        if value.is_empty() {
+            return JsonPointer(vec![JsonPointerItem::Root]);
+        }
 
-        if !token.text.is_empty() {
-            path.push(JsonPointerItem::parse_token(None, token, depth));
+        let mut path = Vec::with_capacity(value.bytes().filter(|&byte| byte == b'/').count() + 1);
+        let (token, mut rest) = Token::split(value.strip_prefix('/').unwrap_or(value));
+        let first = JsonPointerItem::parse_segment(None, token, depth);
+        let opaque = first.is_opaque();
+        path.push(first);
+
+        if opaque {
+            return Self::parse_opaque_tail(path, rest);
         }
 
         while let Some(text) = rest {
             let (token, tail) = Token::split(text);
-            let item = if token.text.is_empty() {
-                JsonPointerItem::Key("".into())
-            } else {
-                JsonPointerItem::parse_token(
-                    path.last().and_then(JsonPointerItem::as_key),
-                    token,
-                    depth,
-                )
-            };
+            let item = JsonPointerItem::parse_segment(
+                path.last().and_then(JsonPointerItem::as_key),
+                token,
+                depth,
+            );
             path.push(item);
             rest = tail;
         }
 
-        if path.is_empty() {
-            path.push(JsonPointerItem::Root);
+        JsonPointer(path)
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn parse_opaque_tail(mut path: Vec<JsonPointerItem<P>>, mut rest: Option<&str>) -> Self {
+        while let Some(text) = rest {
+            let (token, tail) = Token::split(text);
+            path.push(JsonPointerItem::parse_opaque_token(token));
+            rest = tail;
         }
 
         JsonPointer(path)
@@ -97,10 +108,6 @@ impl<'x> Token<'x> {
                     text.push('/');
                     rest = tail;
                 }
-                _ if rest.is_empty() => {
-                    text.push('~');
-                    return Some(text);
-                }
                 _ => return None,
             }
 
@@ -119,6 +126,40 @@ impl<'x> Token<'x> {
 }
 
 impl<P: Property> JsonPointerItem<P> {
+    fn is_opaque(&self) -> bool {
+        matches!(self, JsonPointerItem::Key(key) if key.is_opaque())
+    }
+
+    #[inline(always)]
+    fn parse_segment(
+        parent: Option<&Key<'static, P>>,
+        token: Token<'_>,
+        depth: PointerDepth,
+    ) -> Self {
+        if token.text.is_empty() {
+            JsonPointerItem::empty_segment()
+        } else {
+            JsonPointerItem::parse_token(parent, token, depth)
+        }
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn empty_segment() -> Self {
+        JsonPointerItem::Key("".into())
+    }
+
+    fn parse_opaque_token(token: Token<'_>) -> Self {
+        if !token.escaped {
+            JsonPointerItem::Key(Key::Owned(token.text.to_string()))
+        } else {
+            match token.unescape() {
+                Some(text) => JsonPointerItem::Key(Key::Owned(text)),
+                None => JsonPointerItem::Invalid(token.text.to_string()),
+            }
+        }
+    }
+
     fn parse_token(
         parent: Option<&Key<'static, P>>,
         token: Token<'_>,
@@ -333,7 +374,7 @@ mod tests {
                 "keywords/foo~",
                 vec![
                     JsonPointerItem::Key("keywords".into()),
-                    JsonPointerItem::Key("foo~".into()),
+                    JsonPointerItem::Invalid("foo~".to_string()),
                 ],
             ),
             (
@@ -362,12 +403,13 @@ mod tests {
             (
                 "a~/b",
                 vec![
-                    JsonPointerItem::Key("a~".into()),
+                    JsonPointerItem::Invalid("a~".to_string()),
                     JsonPointerItem::Key("b".into()),
                 ],
             ),
-            ("12~", vec![JsonPointerItem::Key("12~".into())]),
-            ("~", vec![JsonPointerItem::Key("~".into())]),
+            ("12~", vec![JsonPointerItem::Invalid("12~".to_string())]),
+            ("~", vec![JsonPointerItem::Invalid("~".to_string())]),
+            ("a~0~", vec![JsonPointerItem::Invalid("a~0~".to_string())]),
         ] {
             assert_eq!(JsonPointer::parse(input).0, output, "{input}");
         }
@@ -440,6 +482,56 @@ mod tests {
                 JsonPointerItem::Number(70),
             ]
         );
+    }
+
+    #[test]
+    fn segments_after_an_opaque_first_segment_stay_untyped() {
+        for (input, expected) in [
+            ("meta", "[Key(Property(Meta))]"),
+            (
+                "meta/title/0/*/007/~0~1/created/12",
+                concat!(
+                    r#"[Key(Property(Meta)), Key(Owned("title")), Key(Owned("0")), "#,
+                    r#"Key(Owned("*")), Key(Owned("007")), Key(Owned("~/")), "#,
+                    r#"Key(Owned("created")), Key(Owned("12"))]"#
+                ),
+            ),
+            (
+                "/meta/18446744073709551616/1",
+                r#"[Key(Property(Meta)), Key(Owned("18446744073709551616")), Key(Owned("1"))]"#,
+            ),
+            (
+                "meta//ids/",
+                r#"[Key(Property(Meta)), Key(Owned("")), Key(Owned("ids")), Key(Owned(""))]"#,
+            ),
+            (
+                "meta/a~2b/c~/~",
+                r#"[Key(Property(Meta)), Invalid("a~2b"), Invalid("c~"), Invalid("~")]"#,
+            ),
+            (
+                "meta/a~1b/meta/x",
+                r#"[Key(Property(Meta)), Key(Owned("a/b")), Key(Owned("meta")), Key(Owned("x"))]"#,
+            ),
+            (
+                "title/meta/0",
+                "[Key(Property(Title)), Key(Property(Meta)), Number(0)]",
+            ),
+            (
+                "ids/meta/7",
+                r#"[Key(Property(Ids)), Key(Property(Id("meta"))), Number(7)]"#,
+            ),
+        ] {
+            let pointer = JsonPointer::<Nested>::parse(input);
+            assert_eq!(format!("{:?}", pointer.as_slice()), expected, "{input}");
+            assert_eq!(
+                format!(
+                    "{:?}",
+                    JsonPointer::<Nested>::parse(&pointer.to_string()).as_slice()
+                ),
+                expected,
+                "{input}"
+            );
+        }
     }
 
     fn nested_keys(levels: usize) -> Vec<String> {

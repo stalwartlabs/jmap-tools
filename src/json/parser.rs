@@ -101,6 +101,7 @@ pub(crate) struct Parser<'x, P: Property, E: Element> {
     bytes: &'x [u8],
     index: usize,
     depth: u8,
+    opaque: bool,
     scratch: String,
     members: Vec<(Key<'x, P>, Value<'x, P, E>)>,
     items: Vec<Value<'x, P, E>>,
@@ -119,6 +120,7 @@ impl<'x, P: Property, E: Element<Property = P>> Parser<'x, P, E> {
             bytes: json.as_bytes(),
             index: 0,
             depth: MAX_DEPTH,
+            opaque: false,
             scratch: String::new(),
             members: Vec::new(),
             items: Vec::new(),
@@ -191,18 +193,14 @@ impl<'x, P: Property, E: Element<Property = P>> Parser<'x, P, E> {
             b'"' => {
                 self.eat_char();
                 Ok(match self.string()? {
-                    Text::Borrowed(text) => {
-                        match parent.and_then(|key| E::try_parse::<P>(key, text)) {
-                            Some(element) => Value::Element(element),
-                            None => Value::Str(Cow::Borrowed(text)),
-                        }
-                    }
-                    Text::Copied => {
-                        match parent.and_then(|key| E::try_parse::<P>(key, &self.scratch)) {
-                            Some(element) => Value::Element(element),
-                            None => Value::Str(Cow::Owned(self.scratch.as_str().to_owned())),
-                        }
-                    }
+                    Text::Borrowed(text) => match Self::element(parent, text) {
+                        Some(element) => Value::Element(element),
+                        None => Value::Str(Cow::Borrowed(text)),
+                    },
+                    Text::Copied => match Self::element(parent, &self.scratch) {
+                        Some(element) => Value::Element(element),
+                        None => Value::Str(Cow::Owned(self.scratch.as_str().to_owned())),
+                    },
                 })
             }
             b'{' => {
@@ -243,6 +241,13 @@ impl<'x, P: Property, E: Element<Property = P>> Parser<'x, P, E> {
     }
 
     #[inline(always)]
+    fn element(parent: Option<&Key<'_, P>>, text: &str) -> Option<E> {
+        parent
+            .filter(|key| !key.is_opaque())
+            .and_then(|key| E::try_parse::<P>(key, text))
+    }
+
+    #[inline(always)]
     fn enter(&mut self) -> Parsed<()> {
         self.depth -= 1;
         if self.depth == 0 {
@@ -253,6 +258,9 @@ impl<'x, P: Property, E: Element<Property = P>> Parser<'x, P, E> {
     }
 
     fn object(&mut self, parent: Option<&Key<'_, P>>) -> Parsed<Value<'x, P, E>> {
+        let outer = self.opaque;
+        let opaque = outer || parent.is_some_and(Key::is_opaque);
+        self.opaque = opaque;
         let start = self.members.len();
         let mut first = true;
         loop {
@@ -280,6 +288,8 @@ impl<'x, P: Property, E: Element<Property = P>> Parser<'x, P, E> {
             }
             self.eat_char();
             let key = match self.string()? {
+                Text::Borrowed(text) if opaque => Key::Borrowed(text),
+                Text::Copied if opaque => Key::Owned(self.scratch.as_str().to_owned()),
                 Text::Borrowed(text) => match P::try_parse(parent, text) {
                     Some(property) => Key::Property(property),
                     None => Key::Borrowed(text),
@@ -294,13 +304,17 @@ impl<'x, P: Property, E: Element<Property = P>> Parser<'x, P, E> {
                 Some(_) => return Err(self.peek_error(Code::ExpectedColon)),
                 None => return Err(self.peek_error(Code::EofWhileParsingObject)),
             }
-            let value = self.value(Some(&key))?;
+            let value = self.value(if opaque { None } else { Some(&key) })?;
             self.members.push((key, value));
         }
+        self.opaque = outer;
         Ok(Value::Object(ObjectAsVec(self.members.split_off(start))))
     }
 
     fn array(&mut self, parent: Option<&Key<'_, P>>) -> Parsed<Value<'x, P, E>> {
+        let outer = self.opaque;
+        let opaque = outer || parent.is_some_and(Key::is_opaque);
+        self.opaque = opaque;
         let start = self.items.len();
         let mut first = true;
         loop {
@@ -322,9 +336,10 @@ impl<'x, P: Property, E: Element<Property = P>> Parser<'x, P, E> {
             } else {
                 return Err(self.peek_error(Code::ExpectedListCommaOrEnd));
             }
-            let item = self.value(parent)?;
+            let item = self.value(if opaque { None } else { parent })?;
             self.items.push(item);
         }
+        self.opaque = outer;
         Ok(Value::Array(self.items.split_off(start)))
     }
 
