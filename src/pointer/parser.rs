@@ -15,6 +15,8 @@ struct Token<'x> {
 }
 
 impl<P: Property> JsonPointer<P> {
+    pub const MAX_SEGMENTS: usize = 128;
+
     pub fn parse(value: &str) -> Self {
         Self::parse_tokens(value, PointerDepth::default().inner())
     }
@@ -30,9 +32,19 @@ impl<P: Property> JsonPointer<P> {
             return JsonPointer(vec![JsonPointerItem::Root]);
         }
 
-        let mut path = Vec::with_capacity(value.bytes().filter(|&byte| byte == b'/').count() + 1);
-        let (token, mut rest) = Token::split(value.strip_prefix('/').unwrap_or(value));
+        let text = value.strip_prefix('/').unwrap_or(value);
+        let separators = text
+            .bytes()
+            .filter(|&byte| byte == b'/')
+            .take(Self::MAX_SEGMENTS)
+            .count();
+        let (token, mut rest) = Token::split(text);
         let first = JsonPointerItem::parse_segment(None, token, depth);
+        if separators == Self::MAX_SEGMENTS {
+            return Self::too_long(first);
+        }
+
+        let mut path = Vec::with_capacity(separators + 1);
         let opaque = first.is_opaque();
         path.push(first);
 
@@ -52,6 +64,12 @@ impl<P: Property> JsonPointer<P> {
         }
 
         JsonPointer(path)
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn too_long(first: JsonPointerItem<P>) -> Self {
+        JsonPointer(vec![first, JsonPointerItem::Invalid(String::new())])
     }
 
     #[cold]
@@ -622,6 +640,34 @@ mod tests {
             .expect("spawns")
             .join()
             .expect("finishes");
+    }
+
+    #[test]
+    fn pointers_longer_than_the_segment_cap_are_invalid() {
+        let limit = JsonPointer::<TestProp>::MAX_SEGMENTS;
+        for prefix in ["", "/"] {
+            let at_limit = format!("{prefix}ids{}", "/a".repeat(limit - 1));
+            let pointer = JsonPointer::<TestProp>::parse(&at_limit);
+            assert_eq!(pointer.len(), limit, "{prefix:?}");
+            assert_eq!(pointer.to_string(), at_limit.trim_start_matches('/'));
+
+            let expected = [
+                JsonPointerItem::Key(Key::Property(TestProp::Ids)),
+                JsonPointerItem::Invalid(String::new()),
+            ];
+            for over in [
+                format!("{prefix}ids{}", "/a".repeat(limit)),
+                format!("{prefix}ids{}", "/".repeat(1 << 20)),
+            ] {
+                let pointer = JsonPointer::<TestProp>::parse(&over);
+                assert_eq!(pointer.as_slice(), expected, "{prefix:?}");
+                assert_eq!(pointer.to_string(), "ids/");
+                assert!(
+                    JsonPointer::<TestProp>::parse_nested(&over, PointerDepth::default())
+                        .is_some_and(|pointer| pointer.as_slice() == expected)
+                );
+            }
+        }
     }
 
     #[test]
