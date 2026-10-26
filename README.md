@@ -1,3 +1,6 @@
+> [!IMPORTANT]
+> **This repository is archived.** Development of the JMAP tools library has moved to the [Stalwart repository](https://github.com/stalwartlabs/stalwart), where it is maintained as part of Stalwart. This repository is read-only and kept for reference; `jmap-tools` 0.1.8 is the last version published from here.
+
 # jmap-tools
 
 [![crates.io](https://img.shields.io/crates/v/jmap-tools)](https://crates.io/crates/jmap-tools)
